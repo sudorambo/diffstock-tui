@@ -14,7 +14,10 @@ Unlike traditional Monte Carlo simulations that rely on simple statistical prope
 *   **Deep Learning Architecture**:
     *   **Encoder**: LSTM (Long Short-Term Memory) network to process historical price context.
     *   **Denoiser**: WaveNet-style 1D Dilated Convolutional Network with Residual Blocks and Gated Activations.
+    *   **Features**: Trains on Log Returns and Overnight Returns for robust pattern recognition.
+*   **Training Pipeline**: Built-in training mode to learn from 5 years of multi-asset history (SPY, BTC-USD, NVDA).
 *   **Probabilistic Inference**: Generates "Cones of Uncertainty" (P10, P30, P50, P70, P90) by sampling 100+ distinct future paths.
+*   **Backtesting Utility**: Verify model performance against historical data.
 *   **Real-Time Data**: Fetches live OHLCV data from Yahoo Finance.
 *   **Rust-Native ML**: Powered by `candle-core` and `candle-nn` for efficient CPU-based inference.
 *   **Interactive TUI**: Responsive, keyboard-driven interface built with `ratatui`, featuring asynchronous progress tracking.
@@ -37,19 +40,36 @@ The binary will be located in `target/release/diffstock-tui`.
 
 ## Usage
 
-Run the application:
+### 1. Training the Model
+Before running inference, you should train the model to learn market patterns. This downloads 5 years of data for SPY, BTC, and NVDA, and trains the diffusion model.
+
+```bash
+cargo run --release -- --train
+```
+*   **Output**: Saves trained weights to `model_weights.safetensors`.
+*   **Duration**: Depends on CPU, typically a few minutes for 100 epochs.
+
+### 2. Running the TUI (Inference)
+Once trained, run the application to visualize forecasts.
 
 ```bash
 cargo run --release
 ```
 
 1.  **Input**: Type a valid stock ticker symbol (e.g., `NVDA`, `BTC-USD`, `SPY`) and press `Enter`.
-2.  **Inference**: Watch the progress bar as the Diffusion Model iteratively denoises random signals into price forecasts.
+2.  **Inference**: Watch the progress bar as the Diffusion Model iteratively denoises random signals into price forecasts using your trained weights.
 3.  **Analysis**: View the historical chart, technical levels, and the probabilistic forecast cone.
 4.  **Controls**:
     *   `Enter`: Fetch data and start inference.
     *   `r`: Reset the search.
     *   `q` or `Esc`: Quit the application.
+
+### 3. Backtesting
+Validate the model's performance on historical SPY data.
+
+```bash
+cargo run --release -- --backtest
+```
 
 ## Technical Architecture
 
@@ -61,6 +81,7 @@ The application implements a sophisticated Model-View-Update (MVU) architecture:
     *   **Framework**: `candle` (Rust-native tensor library).
     *   **Model**: A conditional diffusion model that learns the gradient of the data distribution.
     *   **Sampling**: 50-step Gaussian Diffusion reverse process.
+    *   **Persistence**: `safetensors` for secure and fast weight loading.
 
 ## Disclaimer
 

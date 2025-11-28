@@ -5,44 +5,40 @@ pub struct GaussianDiffusion {
     pub num_steps: usize,
     pub beta: Tensor,
     pub alpha: Tensor,
-    pub _alpha_bar: Tensor,
+    pub alpha_bar: Tensor,
     pub sigma: Tensor,
-    pub _sqrt_alpha_bar: Tensor,
     pub sqrt_one_minus_alpha_bar: Tensor,
 }
 
 impl GaussianDiffusion {
     pub fn new(num_steps: usize, device: &Device) -> Result<Self> {
-        // Linear beta schedule
-        let beta_start = 1e-4;
-        let beta_end = 0.1; // Adjusted for fewer steps in TUI
-        
-        let betas: Vec<f32> = (0..num_steps)
-            .map(|i| (beta_start + (beta_end - beta_start) * (i as f64 / (num_steps - 1) as f64)) as f32)
-            .collect();
-        
+        let beta_start = 1e-4f32;
+        let beta_end = 0.02f32;
+        let betas = (0..num_steps).map(|i| {
+            beta_start + (beta_end - beta_start) * (i as f32 / (num_steps - 1) as f32)
+        }).collect::<Vec<f32>>();
+
         let beta = Tensor::new(betas.as_slice(), device)?;
-        let alpha = beta.affine(-1.0, 1.0)?;
+        let alpha = (1.0 - &beta)?;
         
         let mut alpha_bar_vec = Vec::with_capacity(num_steps);
         let mut cum_prod = 1.0f32;
-        for &a in betas.iter() {
-            cum_prod *= 1.0f32 - a;
+        for &b in &betas {
+            let a = 1.0 - b;
+            cum_prod *= a;
             alpha_bar_vec.push(cum_prod);
         }
         let alpha_bar = Tensor::new(alpha_bar_vec.as_slice(), device)?;
 
         let sigma = beta.sqrt()?;
-        let sqrt_alpha_bar = alpha_bar.sqrt()?;
         let sqrt_one_minus_alpha_bar = alpha_bar.affine(-1.0, 1.0)?.sqrt()?;
 
         Ok(Self {
             num_steps,
             beta,
             alpha,
-            _alpha_bar: alpha_bar,
+            alpha_bar,
             sigma,
-            _sqrt_alpha_bar: sqrt_alpha_bar,
             sqrt_one_minus_alpha_bar,
         })
     }

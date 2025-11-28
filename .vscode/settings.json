@@ -4,6 +4,7 @@
         "coeff",
         "Conv",
         "Denoising",
+        "lookback",
         "LSTM",
         "randn",
         "ratatui",

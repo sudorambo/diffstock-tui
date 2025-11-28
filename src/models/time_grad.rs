@@ -100,12 +100,12 @@ impl ResidualBlock {
         
         // 2. Add Conditioner
         let h_cond = self.conditioner_projection.forward(cond)?;
-        let h = (h + h_cond)?;
+        let h = h.broadcast_add(&h_cond)?;
 
         // 3. Add Diffusion Embedding
         let diffusion_emb = self.diffusion_projection.forward(diffusion_emb)?;
         let diffusion_emb = diffusion_emb.unsqueeze(2)?; // [batch, 2*dilation_channels, 1]
-        let h = (h + diffusion_emb)?;
+        let h = h.broadcast_add(&diffusion_emb)?;
         
         // 4. Gated Activation
         // Split into filter and gate

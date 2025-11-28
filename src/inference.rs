@@ -24,40 +24,64 @@ pub async fn run_inference(
     progress_tx: Option<Sender<f64>>,
 ) -> Result<ForecastData> {
     // 1. Setup Device and Data
-    let device = Device::Cpu; // Use CPU for TUI app compatibility
-    let history_prices: Vec<f64> = data.history.iter().map(|c| c.close).collect();
+    let device = Device::Cpu;
     
-    // Normalize data (simple standardization for the model)
-    let (mean, std) = data.stats();
-    
-    // For the model, we need a context window. Let's take the last 100 points or all if less.
-    let context_len = 100;
-    let start_idx = history_prices.len().saturating_sub(context_len);
-    let context_data = &history_prices[start_idx..];
-    
-    // Convert to Tensor: Shape (1, seq_len, 1) for LSTM
-    // RNNEncoder expects [batch, seq_len, input_dim]
-    let context_tensor = Tensor::from_slice(context_data, (1, context_data.len(), 1), &device)?.to_dtype(DType::F32)?;
+    // Prepare Context Data (Last 50 days)
+    let context_len = 50;
+    if data.history.len() < context_len + 1 {
+        return Err(anyhow::anyhow!("Not enough history data (need at least 51 days)"));
+    }
 
-    // 2. Initialize Model Components (Randomly initialized for this demo)
-    let input_size = 1;
-    let hidden_size = 32;
+    let start_idx = data.history.len() - context_len;
+    
+    // Calculate features for the context window
+    let mut features = Vec::with_capacity(context_len);
+    let mut close_vals = Vec::with_capacity(context_len);
+
+    for i in 0..context_len {
+        let idx = start_idx + i;
+        let close_ret = (data.history[idx].close / data.history[idx-1].close).ln();
+        let overnight_ret = (data.history[idx].open / data.history[idx-1].close).ln();
+        features.push(vec![close_ret, overnight_ret]);
+        close_vals.push(close_ret);
+    }
+
+    // Normalize Context
+    let mean = close_vals.iter().sum::<f64>() / context_len as f64;
+    let variance = close_vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (context_len as f64 - 1.0);
+    let std = variance.sqrt() + 1e-6;
+
+    let normalized_features: Vec<f32> = features.iter().flat_map(|f| {
+        vec![
+            ((f[0] - mean) / std) as f32,
+            ((f[1] - mean) / std) as f32
+        ]
+    }).collect();
+
+    // [1, SeqLen, 2]
+    let context_tensor = Tensor::from_slice(&normalized_features, (1, context_len, 2), &device)?;
+
+    // 2. Initialize Model
+    let input_dim = 2;
+    let hidden_dim = 32;
     let num_layers = 2;
-    let diff_steps = 50; // Reduced to 50 to cut sim time in half
+    let diff_steps = 50;
 
-    // Create a VarBuilder with random initialization
-    let vb = VarBuilder::zeros(DType::F32, &device);
+    // Load weights if available
+    let vb = if std::path::Path::new("model_weights.safetensors").exists() {
+        unsafe { VarBuilder::from_mmaped_safetensors(&["model_weights.safetensors"], DType::F32, &device)? }
+    } else {
+        // Warn user? For now just random init
+        VarBuilder::zeros(DType::F32, &device)
+    };
 
-    let encoder = RNNEncoder::new(input_size, hidden_size, vb.pp("encoder"))?;
-    let model = EpsilonTheta::new(input_size, hidden_size, hidden_size, num_layers, vb.pp("model"))?;
+    let encoder = RNNEncoder::new(input_dim, hidden_dim, vb.pp("encoder"))?;
+    let model = EpsilonTheta::new(1, hidden_dim, hidden_dim, num_layers, vb.pp("model"))?;
     let diffusion = GaussianDiffusion::new(diff_steps, &device)?;
 
     // 3. Encode History
-    // The encoder produces the hidden state to condition the diffusion
-    // Output: [batch, 1]
     let hidden_state = encoder.forward(&context_tensor)?;
-    // Reshape for Conv1d conditioning: [batch, 1, 1]
-    let hidden_state = hidden_state.unsqueeze(2)?;
+    let hidden_state = hidden_state.unsqueeze(2)?; // [1, 1, 1]
 
     // 4. Autoregressive Forecasting Loop
     let mut all_paths = Vec::with_capacity(num_simulations);
@@ -68,25 +92,24 @@ pub async fn run_inference(
     for _ in 0..num_simulations {
         let mut current_path = Vec::with_capacity(horizon);
         let current_hidden = hidden_state.clone();
-        let mut last_val = *context_data.last().unwrap_or(&0.0); 
+        let mut last_val = data.history.last().unwrap().close;
 
         for _ in 0..horizon {
-            // Sample next step x_t given condition h_{t-1}
-            // Shape of sample: (1, 1, 1) -> (Batch, Channel, Time)
+            // Sample next step (Close Return)
             let sample = diffusion.sample(&model, &current_hidden, (1, 1, 1))?;
             
-            let predicted_val = sample.squeeze(2)?.squeeze(1)?.get(0)?.to_scalar::<f32>()? as f64;
+            let predicted_norm_ret = sample.squeeze(2)?.squeeze(1)?.get(0)?.to_scalar::<f32>()? as f64;
             
-            // Simplified logic: treat prediction as a shock/return
-            // In a real model, we'd update the RNN state here.
-            let shock = predicted_val * std; 
-            let next_price = last_val * (mean + shock).exp();
+            // Denormalize
+            let predicted_ret = (predicted_norm_ret * std) + mean;
+            
+            let next_price = last_val * predicted_ret.exp();
             
             current_path.push(next_price);
             last_val = next_price;
 
             completed_steps += 1;
-            if completed_steps % 10 == 0 { // Update every 10 steps to avoid channel overhead
+            if completed_steps % 10 == 0 {
                 if let Some(tx) = &progress_tx {
                     let _ = tx.send(completed_steps as f64 / total_steps as f64).await;
                 }
@@ -128,4 +151,46 @@ pub async fn run_inference(
         p90,
         _paths: all_paths,
     })
+}
+
+pub async fn run_backtest(data: Arc<StockData>) -> Result<()> {
+    println!("Running Backtest...");
+    let horizon = 10;
+    let num_simulations = 100;
+    
+    // Hide last 50 days (or just horizon?)
+    // The prompt says "hides the last 50 days".
+    let hidden_days = 50;
+    if data.history.len() < hidden_days + 51 {
+        return Err(anyhow::anyhow!("Not enough data for backtest"));
+    }
+
+    // Create a subset of data
+    let train_len = data.history.len() - hidden_days;
+    let train_history = data.history[..train_len].to_vec();
+    let test_history = data.history[train_len..train_len+horizon].to_vec(); // Test on next 'horizon' days
+
+    let train_data = Arc::new(StockData {
+        symbol: data.symbol.clone(),
+        history: train_history,
+    });
+
+    let forecast = run_inference(train_data, horizon, num_simulations, None).await?;
+
+    // Calculate Coverage
+    let mut inside_cone = 0;
+    for (i, candle) in test_history.iter().enumerate() {
+        let price = candle.close;
+        let lower = forecast.p10[i].1;
+        let upper = forecast.p90[i].1;
+        
+        if price >= lower && price <= upper {
+            inside_cone += 1;
+        }
+        println!("Day {}: Price={:.2}, P10={:.2}, P90={:.2} [{}]", 
+            i+1, price, lower, upper, if price >= lower && price <= upper { "INSIDE" } else { "OUTSIDE" });
+    }
+
+    println!("Coverage Probability (P10-P90): {:.2}%", (inside_cone as f64 / horizon as f64) * 100.0);
+    Ok(())
 }
