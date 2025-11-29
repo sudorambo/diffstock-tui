@@ -135,8 +135,12 @@ impl eframe::App for GuiApp {
                         ui.vertical(|ui| {
                             ui.heading("Forecast");
                             if let Some(forecast) = &self.app.forecast {
-                                if let Some((_, p50_last)) = forecast.p50.last() {
-                                     ui.label(format!("Target (Median): {:.2}", p50_last));
+                                if let Some((timestamp, p50_last)) = forecast.p50.last() {
+                                     let dt = chrono::Utc.timestamp_opt(*timestamp as i64, 0)
+                                         .map(|dt| dt.format("%Y-%m-%d").to_string())
+                                         .single()
+                                         .unwrap_or_default();
+                                     ui.label(format!("Target (Median) (50day - {}): {:.2}", dt, p50_last));
                                 }
                                 if let Some((_, p30_last)) = forecast.p30.last() {
                                      if let Some((_, p70_last)) = forecast.p70.last() {
