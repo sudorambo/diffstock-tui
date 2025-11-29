@@ -77,7 +77,22 @@ impl eframe::App for GuiApp {
                             let dt = chrono::Utc.timestamp_opt(x.value as i64, 0).unwrap();
                             dt.format("%Y-%m-%d").to_string()
                         })
-                        .view_aspect(2.0);
+                        .label_formatter(|name, value| {
+                            let dt = chrono::Utc.timestamp_opt(value.x as i64, 0)
+                                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                                .single()
+                                .unwrap_or_default();
+                            format!("{}\nDate: {}\nPrice: {:.2}", name, dt, value.y)
+                        })
+                        .coordinates_formatter(egui_plot::Corner::LeftBottom, egui_plot::CoordinatesFormatter::new(|point: &egui_plot::PlotPoint, _bounds: &egui_plot::PlotBounds| {
+                            let dt = chrono::Utc.timestamp_opt(point.x as i64, 0)
+                                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                                .single()
+                                .unwrap_or_default();
+                            format!("Date: {}, Price: {:.2}", dt, point.y)
+                        }))
+                        .view_aspect(2.0)
+                        .link_axis("stock_link", true, false);
                         
                     plot.show(ui, |plot_ui| {
                         if let Some(data) = &self.app.stock_data {
@@ -90,13 +105,53 @@ impl eframe::App for GuiApp {
                         if let Some(forecast) = &self.app.forecast {
                             // Assuming forecast times are also timestamps
                             let p50: PlotPoints = forecast.p50.iter().map(|&(x, y)| [x, y]).collect();
+                            let p30: PlotPoints = forecast.p30.iter().map(|&(x, y)| [x, y]).collect();
+                            let p70: PlotPoints = forecast.p70.iter().map(|&(x, y)| [x, y]).collect();
                             let p10: PlotPoints = forecast.p10.iter().map(|&(x, y)| [x, y]).collect();
                             let p90: PlotPoints = forecast.p90.iter().map(|&(x, y)| [x, y]).collect();
 
                             plot_ui.line(Line::new(p50).name("Median").color(egui::Color32::GREEN));
-                            plot_ui.line(Line::new(p10).name("P10").style(egui_plot::LineStyle::Dashed { length: 10.0 }).color(egui::Color32::LIGHT_GREEN));
-                            plot_ui.line(Line::new(p90).name("P90").style(egui_plot::LineStyle::Dashed { length: 10.0 }).color(egui::Color32::LIGHT_GREEN));
+                            plot_ui.line(Line::new(p30).name("P30").style(egui_plot::LineStyle::Dashed { length: 5.0 }).color(egui::Color32::LIGHT_GREEN));
+                            plot_ui.line(Line::new(p70).name("P70").style(egui_plot::LineStyle::Dashed { length: 5.0 }).color(egui::Color32::LIGHT_GREEN));
+                            plot_ui.line(Line::new(p10).name("P10").style(egui_plot::LineStyle::Dashed { length: 10.0 }).color(egui::Color32::from_rgb(100, 200, 100)));
+                            plot_ui.line(Line::new(p90).name("P90").style(egui_plot::LineStyle::Dashed { length: 10.0 }).color(egui::Color32::from_rgb(100, 200, 100)));
                         }
+                    });
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.heading("Market Data");
+                            if let Some(data) = &self.app.stock_data {
+                                if let Some(last) = data.history.last() {
+                                    ui.label(format!("Last Price: {:.2}", last.close));
+                                    ui.label(format!("Date: {}", last.date.format("%Y-%m-%d")));
+                                    ui.label(format!("Volume: {:.0}", last.volume));
+                                }
+                            }
+                        });
+                        ui.separator();
+                        ui.vertical(|ui| {
+                            ui.heading("Forecast");
+                            if let Some(forecast) = &self.app.forecast {
+                                if let Some((_, p50_last)) = forecast.p50.last() {
+                                     ui.label(format!("Target (Median): {:.2}", p50_last));
+                                }
+                                if let Some((_, p30_last)) = forecast.p30.last() {
+                                     if let Some((_, p70_last)) = forecast.p70.last() {
+                                         ui.label(format!("Range (P30-P70): {:.2} - {:.2}", p30_last, p70_last));
+                                     }
+                                }
+                                 if let Some((_, p10_last)) = forecast.p10.last() {
+                                     if let Some((_, p90_last)) = forecast.p90.last() {
+                                         ui.label(format!("Range (P10-P90): {:.2} - {:.2}", p10_last, p90_last));
+                                         ui.label("P10: Bearish / Conservative");
+                                         ui.label("P90: Bullish / Optimistic");
+                                     }
+                                }
+                            }
+                        });
                     });
                 }
             }
