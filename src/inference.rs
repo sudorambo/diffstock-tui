@@ -6,6 +6,7 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use chrono::Duration;
 
 #[derive(Clone, Debug)]
 pub struct ForecastData {
@@ -85,7 +86,7 @@ pub async fn run_inference(
 
     // 4. Autoregressive Forecasting Loop
     let mut all_paths = Vec::with_capacity(num_simulations);
-    let start_time_idx = data.history.len() as f64;
+    let start_date = data.history.last().unwrap().date;
     let total_steps = num_simulations * horizon;
     let mut completed_steps = 0;
 
@@ -135,7 +136,7 @@ pub async fn run_inference(
         let idx_70 = (num_simulations as f64 * 0.7) as usize;
         let idx_90 = (num_simulations as f64 * 0.9) as usize;
 
-        let time_point = start_time_idx + (t as f64);
+        let time_point = (start_date + Duration::days(t as i64 + 1)).timestamp() as f64;
         p10.push((time_point, time_slice[idx_10]));
         p30.push((time_point, time_slice[idx_30]));
         p50.push((time_point, time_slice[idx_50]));

@@ -6,6 +6,7 @@ mod models;
 mod train;
 mod tui;
 mod ui;
+mod gui;
 
 use app::App;
 use clap::Parser;
@@ -21,6 +22,10 @@ struct Args {
     /// Run backtest on SPY data
     #[arg(long)]
     backtest: bool,
+
+    /// Launch in GUI mode
+    #[arg(long)]
+    gui: bool,
 }
 
 #[tokio::main]
@@ -47,6 +52,16 @@ async fn main() -> io::Result<()> {
             }
             Err(e) => eprintln!("Failed to fetch data: {}", e),
         }
+        return Ok(());
+    }
+
+    if args.gui {
+        let options = eframe::NativeOptions::default();
+        eframe::run_native(
+            "DiffStock",
+            options,
+            Box::new(|_cc| Ok(Box::new(gui::GuiApp::new(App::new())))),
+        ).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         return Ok(());
     }
 

@@ -4,6 +4,8 @@
         "coeff",
         "Conv",
         "Denoising",
+        "eframe",
+        "egui",
         "lookback",
         "LSTM",
         "randn",
