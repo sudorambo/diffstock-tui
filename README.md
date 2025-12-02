@@ -15,7 +15,7 @@ Unlike traditional Monte Carlo simulations that rely on simple statistical prope
     *   **Encoder**: LSTM (Long Short-Term Memory) network to process historical price context.
     *   **Denoiser**: WaveNet-style 1D Dilated Convolutional Network with Residual Blocks and Gated Activations.
     *   **Features**: Trains on Log Returns and Overnight Returns for robust pattern recognition.
-*   **Training Pipeline**: Built-in training mode to learn from 5 years of market history (currently configured for ARKK).
+*   **Training Pipeline**: Built-in training mode to learn from 5 years of market history.
 *   **Probabilistic Inference**: Generates "Cones of Uncertainty" (P10, P30, P50, P70, P90) by sampling 500 distinct future paths.
 *   **Backtesting Utility**: Verify model performance against historical data.
 *   **Real-Time Data**: Fetches live OHLCV data from Yahoo Finance.
