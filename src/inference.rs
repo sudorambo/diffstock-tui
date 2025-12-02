@@ -64,9 +64,9 @@ pub async fn run_inference(
 
     // 2. Initialize Model
     let input_dim = 2;
-    let hidden_dim = 32;
-    let num_layers = 2;
-    let diff_steps = 50;
+    let hidden_dim = 64;
+    let num_layers = 3;
+    let diff_steps = 100;
 
     // Load weights if available
     let vb = if std::path::Path::new("model_weights.safetensors").exists() {
