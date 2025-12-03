@@ -1,6 +1,8 @@
 use candle_core::{Tensor, Result, Device};
 use crate::models::time_grad::EpsilonTheta;
 
+/// Gaussian Diffusion process for probabilistic time-series forecasting.
+/// Implements the forward diffusion (adding noise) and reverse diffusion (denoising) steps.
 pub struct GaussianDiffusion {
     pub num_steps: usize,
     pub beta: Tensor,
@@ -11,6 +13,7 @@ pub struct GaussianDiffusion {
 }
 
 impl GaussianDiffusion {
+    /// Creates a new Gaussian Diffusion instance with a linear beta schedule.
     pub fn new(num_steps: usize, device: &Device) -> Result<Self> {
         let beta_start = 1e-4f32;
         let beta_end = 0.02f32;
@@ -43,10 +46,18 @@ impl GaussianDiffusion {
         })
     }
 
+    /// Samples from the model by iteratively denoising random noise.
+    ///
+    /// # Arguments
+    /// * `model` - The trained epsilon-theta model.
+    /// * `cond` - Conditional context (encoded history).
+    /// * `asset_ids` - Asset ID tensor [batch].
+    /// * `shape` - Shape of the output tensor [batch, channels, time].
     pub fn sample(
         &self,
         model: &EpsilonTheta,
         cond: &Tensor,
+        asset_ids: &Tensor,
         shape: (usize, usize, usize), // [batch, channels, time]
     ) -> Result<Tensor> {
         let device = cond.device();
@@ -57,7 +68,7 @@ impl GaussianDiffusion {
             let time_tensor = Tensor::new(&[t as f32], device)?.unsqueeze(0)?; // [1, 1]
             
             // Predict noise
-            let epsilon_theta = model.forward(&x, &time_tensor, cond)?;
+            let epsilon_theta = model.forward(&x, &time_tensor, asset_ids, cond)?;
 
             // Compute mean
             // mu = 1/sqrt(alpha_t) * (x_t - beta_t/sqrt(1-alpha_bar_t) * epsilon)
@@ -79,5 +90,36 @@ impl GaussianDiffusion {
         }
 
         Ok(x)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::Device;
+
+    #[test]
+    fn test_diffusion_schedule() -> Result<()> {
+        let device = Device::Cpu;
+        let num_steps = 100;
+        let diffusion = GaussianDiffusion::new(num_steps, &device)?;
+
+        assert_eq!(diffusion.num_steps, num_steps);
+        assert_eq!(diffusion.beta.dims1()?, num_steps);
+        assert_eq!(diffusion.alpha.dims1()?, num_steps);
+        assert_eq!(diffusion.alpha_bar.dims1()?, num_steps);
+
+        // Check beta range
+        let betas = diffusion.beta.to_vec1::<f32>()?;
+        assert!((betas[0] - 1e-4).abs() < 1e-6);
+        assert!((betas[num_steps - 1] - 0.02).abs() < 1e-6);
+
+        // Check alpha bar monotonicity (should decrease)
+        let alpha_bars = diffusion.alpha_bar.to_vec1::<f32>()?;
+        for i in 1..num_steps {
+            assert!(alpha_bars[i] < alpha_bars[i-1]);
+        }
+
+        Ok(())
     }
 }

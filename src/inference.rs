@@ -1,12 +1,14 @@
 use crate::data::StockData;
 use crate::diffusion::GaussianDiffusion;
 use crate::models::time_grad::{EpsilonTheta, RNNEncoder};
+use crate::config::TRAINING_SYMBOLS;
 use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use chrono::Duration;
+use tracing::warn;
 
 #[derive(Clone, Debug)]
 pub struct ForecastData {
@@ -62,11 +64,19 @@ pub async fn run_inference(
     // [1, SeqLen, 2]
     let context_tensor = Tensor::from_slice(&normalized_features, (1, context_len, 2), &device)?;
 
+    // Determine Asset ID
+    let asset_id = TRAINING_SYMBOLS.iter().position(|&s| s == data.symbol).unwrap_or_else(|| {
+        warn!("Symbol {} not found in training set. Using default asset ID 0.", data.symbol);
+        0
+    });
+    let asset_id_tensor = Tensor::new(&[asset_id as u32], &device)?;
+
     // 2. Initialize Model
     let input_dim = 2;
     let hidden_dim = 64;
     let num_layers = 3;
     let diff_steps = 100;
+    let num_assets = TRAINING_SYMBOLS.len();
 
     // Load weights if available
     let vb = if std::path::Path::new("model_weights.safetensors").exists() {
@@ -77,7 +87,7 @@ pub async fn run_inference(
     };
 
     let encoder = RNNEncoder::new(input_dim, hidden_dim, vb.pp("encoder"))?;
-    let model = EpsilonTheta::new(1, hidden_dim, hidden_dim, num_layers, vb.pp("model"))?;
+    let model = EpsilonTheta::new(1, hidden_dim, hidden_dim, num_layers, num_assets, vb.pp("model"))?;
     let diffusion = GaussianDiffusion::new(diff_steps, &device)?;
 
     // 3. Encode History
@@ -97,7 +107,10 @@ pub async fn run_inference(
 
         for _ in 0..horizon {
             // Sample next step (Close Return)
-            let sample = diffusion.sample(&model, &current_hidden, (1, 1, 1))?;
+            // Note: sample() calls model.forward(). We need to update sample() signature or model.forward() usage inside sample().
+            // Wait, diffusion.sample() calls model.forward().
+            // I need to update diffusion.sample() to accept asset_ids!
+            let sample = diffusion.sample(&model, &current_hidden, &asset_id_tensor, (1, 1, 1))?;
             
             let predicted_norm_ret = sample.squeeze(2)?.squeeze(1)?.get(0)?.to_scalar::<f32>()? as f64;
             

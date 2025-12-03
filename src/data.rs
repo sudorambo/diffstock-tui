@@ -1,8 +1,10 @@
 use chrono::{DateTime, Duration, Utc, TimeZone};
 use rand::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use tracing::{info, warn, error};
 
+/// Represents a single candlestick data point (OHLCV).
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct Candle {
@@ -14,34 +16,35 @@ pub struct Candle {
     pub volume: f64,
 }
 
+/// Holds historical stock data for a specific symbol.
 #[derive(Clone, Debug)]
 pub struct StockData {
     pub symbol: String,
     pub history: Vec<Candle>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct YahooChartResponse {
     chart: YahooChart,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct YahooChart {
     result: Vec<YahooResult>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct YahooResult {
     timestamp: Vec<i64>,
     indicators: YahooIndicators,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct YahooIndicators {
     quote: Vec<YahooQuote>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct YahooQuote {
     open: Vec<Option<f64>>,
     high: Vec<Option<f64>>,
@@ -50,20 +53,40 @@ struct YahooQuote {
     volume: Vec<Option<f64>>,
 }
 
+/// Fetches historical stock data from Yahoo Finance.
+///
+/// # Arguments
+/// * `symbol` - The stock ticker symbol (e.g., "AAPL").
+/// * `range` - The time range to fetch (e.g., "1y", "5y").
 pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
-    let url = format!(
-        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval=1d",
-        symbol, range
-    );
+    let cache_dir = std::path::Path::new(".cache");
+    if !cache_dir.exists() {
+        std::fs::create_dir(cache_dir)?;
+    }
     
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await?
-        .json::<YahooChartResponse>()
-        .await?;
-    let result = resp.chart.result.first().ok_or(anyhow::anyhow!("No data found"))?;
+    let cache_file = cache_dir.join(format!("{}_{}.json", symbol, range));
+    
+    let response: YahooChartResponse = if cache_file.exists() {
+        // Check if cache is fresh (e.g. < 24 hours)
+        let metadata = std::fs::metadata(&cache_file)?;
+        let modified = metadata.modified()?;
+        let age = std::time::SystemTime::now().duration_since(modified)?;
+        
+        if age.as_secs() < 86400 {
+            info!("Loading {} from cache...", symbol);
+            let file = std::fs::File::open(&cache_file)?;
+            let reader = std::io::BufReader::new(file);
+            serde_json::from_reader(reader)?
+        } else {
+            info!("Cache expired for {}, fetching...", symbol);
+            fetch_from_api(symbol, range, &cache_file).await?
+        }
+    } else {
+        info!("Cache miss for {}, fetching...", symbol);
+        fetch_from_api(symbol, range, &cache_file).await?
+    };
+
+    let result = response.chart.result.first().ok_or(anyhow::anyhow!("No data found"))?;
     
     let mut history = Vec::new();
     let quotes = &result.indicators.quote[0];
@@ -91,6 +114,53 @@ pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
         symbol: symbol.to_string(),
         history,
     })
+}
+
+async fn fetch_from_api(symbol: &str, range: &str, cache_path: &std::path::Path) -> Result<YahooChartResponse> {
+    let url = format!(
+        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval=1d",
+        symbol, range
+    );
+    
+    let mut attempts = 0;
+    let max_attempts = 3;
+    
+    loop {
+        attempts += 1;
+        match reqwest::Client::new()
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0")
+            .send()
+            .await 
+        {
+            Ok(resp) => {
+                match resp.json::<YahooChartResponse>().await {
+                    Ok(resp_json) => {
+                        // Save to cache
+                        let file = std::fs::File::create(cache_path)?;
+                        let writer = std::io::BufWriter::new(file);
+                        serde_json::to_writer(writer, &resp_json)?;
+                        
+                        return Ok(resp_json);
+                    }
+                    Err(e) => {
+                        if attempts >= max_attempts {
+                            return Err(e.into());
+                        }
+                        warn!("Failed to parse JSON for {} (attempt {}/{}): {}", symbol, attempts, max_attempts, e);
+                    }
+                }
+            }
+            Err(e) => {
+                if attempts >= max_attempts {
+                    return Err(e.into());
+                }
+                warn!("Failed to fetch data for {} (attempt {}/{}): {}", symbol, attempts, max_attempts, e);
+            }
+        }
+        
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
 }
 
 impl StockData {
@@ -220,17 +290,49 @@ pub struct Analysis {
 pub struct TrainingDataset {
     pub features: Vec<Vec<f64>>, // [seq_len, 2] (Close Return, Overnight Return)
     pub targets: Vec<Vec<f64>>,  // [forecast_len, 1] (Close Return)
+    pub asset_ids: Vec<usize>,   // [1] Asset ID for each sample
+}
+
+impl TrainingDataset {
+    pub fn split(self, train_ratio: f64) -> (Self, Self) {
+        let n = self.features.len();
+        let train_size = (n as f64 * train_ratio) as usize;
+        
+        let (train_features, val_features) = self.features.split_at(train_size);
+        let (train_targets, val_targets) = self.targets.split_at(train_size);
+        let (train_ids, val_ids) = self.asset_ids.split_at(train_size);
+        
+        (
+            Self {
+                features: train_features.to_vec(),
+                targets: train_targets.to_vec(),
+                asset_ids: train_ids.to_vec(),
+            },
+            Self {
+                features: val_features.to_vec(),
+                targets: val_targets.to_vec(),
+                asset_ids: val_ids.to_vec(),
+            }
+        )
+    }
 }
 
 impl StockData {
-    pub fn prepare_training_data(&self, lookback: usize, forecast: usize) -> TrainingDataset {
+    /// Prepares sliding window datasets for training the diffusion model.
+    ///
+    /// # Arguments
+    /// * `lookback` - Number of past days to use as input context.
+    /// * `forecast` - Number of future days to predict.
+    /// * `asset_id` - Unique identifier for the asset.
+    pub fn prepare_training_data(&self, lookback: usize, forecast: usize, asset_id: usize) -> TrainingDataset {
         let mut features = Vec::new();
         let mut targets = Vec::new();
+        let mut asset_ids = Vec::new();
 
         // Calculate returns
         // We need at least lookback + forecast + 1 data points
         if self.history.len() < lookback + forecast + 1 {
-            return TrainingDataset { features, targets };
+            return TrainingDataset { features, targets, asset_ids };
         }
         
         let mut all_close_returns = Vec::with_capacity(self.history.len());
@@ -247,7 +349,7 @@ impl StockData {
         // Create sliding windows
         let total_returns = all_close_returns.len();
         if total_returns < lookback + forecast {
-             return TrainingDataset { features, targets };
+             return TrainingDataset { features, targets, asset_ids };
         }
 
         for j in 0..total_returns - lookback - forecast {
@@ -281,8 +383,64 @@ impl StockData {
 
             features.push(normalized_features);
             targets.push(normalized_targets);
+            asset_ids.push(asset_id);
         }
 
-        TrainingDataset { features, targets }
+        TrainingDataset { features, targets, asset_ids }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prepare_training_data() {
+        let mock_data = StockData::new_mock("TEST", 100);
+        let lookback = 10;
+        let forecast = 5;
+        let asset_id = 0;
+        
+        let dataset = mock_data.prepare_training_data(lookback, forecast, asset_id);
+        
+        // Check if we have data
+        assert!(!dataset.features.is_empty());
+        assert!(!dataset.targets.is_empty());
+        assert!(!dataset.asset_ids.is_empty());
+        assert_eq!(dataset.features.len(), dataset.targets.len());
+        assert_eq!(dataset.features.len(), dataset.asset_ids.len());
+        assert_eq!(dataset.asset_ids[0], asset_id);
+        
+        // Check dimensions
+        let first_feature = &dataset.features[0];
+        assert_eq!(first_feature.len(), lookback * 2); // 2 features per step
+        
+        let first_target = &dataset.targets[0];
+        assert_eq!(first_target.len(), forecast);
+        
+        // Check normalization (mean should be close to 0, std close to 1)
+        // This is per-window normalization, so we check one window
+        let close_vals: Vec<f64> = first_feature.iter().step_by(2).cloned().collect();
+        let mean = close_vals.iter().sum::<f64>() / close_vals.len() as f64;
+        // Since we normalized, the mean of the *original* window was subtracted.
+        // The values in `first_feature` are already normalized.
+        // So their mean should be ~0 and std ~1.
+        
+        let feat_mean = first_feature.iter().sum::<f64>() / first_feature.len() as f64;
+        // Note: we normalize close and overnight returns together? 
+        // In prepare_training_data:
+        // let normalized_features: Vec<f64> = window_features.iter().flat_map(|f| {
+        //     vec![
+        //         (f[0] - mean) / std,
+        //         (f[1] - mean) / std
+        //     ]
+        // }).collect();
+        // We use the same mean/std (calculated from close returns) for both features.
+        // So the mean of the normalized close returns should be 0.
+        
+        let norm_close_vals: Vec<f64> = first_feature.iter().step_by(2).cloned().collect();
+        let norm_mean = norm_close_vals.iter().sum::<f64>() / norm_close_vals.len() as f64;
+        
+        assert!(norm_mean.abs() < 1e-5);
     }
 }

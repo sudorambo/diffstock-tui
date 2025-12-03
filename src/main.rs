@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod data;
 mod diffusion;
 mod inference;
@@ -11,9 +12,26 @@ mod gui;
 use app::App;
 use clap::Parser;
 use std::io;
+use tracing::{info, error};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author, 
+    version, 
+    about = "DiffStock-TUI: Probabilistic stock price forecasting with Diffusion Models",
+    after_help = "EXAMPLES:
+    # Train with default settings
+    cargo run --release -- --train
+
+    # Train with custom hyperparameters
+    cargo run --release -- --train --epochs 100 --batch-size 32 --learning-rate 0.0005
+
+    # Run backtest
+    cargo run --release -- --backtest
+
+    # Launch GUI
+    cargo run --release -- --gui"
+)]
 struct Args {
     /// Train the model on historical data
     #[arg(long)]
@@ -26,31 +44,44 @@ struct Args {
     /// Launch in GUI mode
     #[arg(long)]
     gui: bool,
+
+    /// Number of epochs for training (default: 200). Ignored if --train is not set.
+    #[arg(long)]
+    epochs: Option<usize>,
+
+    /// Batch size for training (default: 64). Ignored if --train is not set.
+    #[arg(long)]
+    batch_size: Option<usize>,
+
+    /// Learning rate for training (default: 0.001). Ignored if --train is not set.
+    #[arg(long)]
+    learning_rate: Option<f64>,
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    tracing_subscriber::fmt::init();
     let args = Args::parse();
 
     if args.train {
-        match train::train_model().await {
-            Ok(_) => println!("Training completed successfully."),
-            Err(e) => eprintln!("Training failed: {}", e),
+        match train::train_model(args.epochs, args.batch_size, args.learning_rate).await {
+            Ok(_) => info!("Training completed successfully."),
+            Err(e) => error!("Training failed: {}", e),
         }
         return Ok(());
     }
 
     if args.backtest {
-        println!("Fetching SPY data for backtesting...");
+        info!("Fetching SPY data for backtesting...");
         match data::fetch_range("SPY", "5y").await {
             Ok(data) => {
                 let data = std::sync::Arc::new(data);
                 match inference::run_backtest(data).await {
-                    Ok(_) => println!("Backtest completed."),
-                    Err(e) => eprintln!("Backtest failed: {}", e),
+                    Ok(_) => info!("Backtest completed."),
+                    Err(e) => error!("Backtest failed: {}", e),
                 }
             }
-            Err(e) => eprintln!("Failed to fetch data: {}", e),
+            Err(e) => error!("Failed to fetch data: {}", e),
         }
         return Ok(());
     }
@@ -72,7 +103,7 @@ async fn main() -> io::Result<()> {
     tui::restore()?;
 
     if let Err(e) = res {
-        println!("Error: {:?}", e);
+        error!("Error: {:?}", e);
     }
 
     Ok(())

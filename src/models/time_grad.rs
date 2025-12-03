@@ -1,5 +1,5 @@
 use candle_core::{Module, Result, Tensor};
-use candle_nn::{Conv1d, Conv1dConfig, Linear, VarBuilder, LSTMConfig, LSTM, RNN};
+use candle_nn::{Conv1d, Conv1dConfig, Linear, VarBuilder, LSTMConfig, LSTM, RNN, Embedding};
 
 // --- 1. Diffusion Embedding ---
 // Encodes the diffusion step 'k' into a vector.
@@ -131,6 +131,7 @@ impl ResidualBlock {
 pub struct EpsilonTheta {
     input_projection: Conv1d,
     diffusion_embedding: DiffusionEmbedding,
+    asset_embedding: Embedding,
     residual_layers: Vec<ResidualBlock>,
     skip_projection: Conv1d,
     output_projection: Conv1d,
@@ -142,6 +143,7 @@ impl EpsilonTheta {
         residual_channels: usize,
         dilation_channels: usize,
         num_layers: usize,
+        num_assets: usize,
         vb: VarBuilder,
     ) -> Result<Self> {
         let input_projection = candle_nn::conv1d(
@@ -153,6 +155,7 @@ impl EpsilonTheta {
         )?;
 
         let diffusion_embedding = DiffusionEmbedding::new(residual_channels, vb.pp("diffusion_embedding"))?;
+        let asset_embedding = candle_nn::embedding(num_assets, residual_channels, vb.pp("asset_embedding"))?;
 
         let mut residual_layers = Vec::new();
         for i in 0..num_layers {
@@ -184,20 +187,25 @@ impl EpsilonTheta {
         Ok(Self {
             input_projection,
             diffusion_embedding,
+            asset_embedding,
             residual_layers,
             skip_projection,
             output_projection,
         })
     }
 
-    pub fn forward(&self, x: &Tensor, time_steps: &Tensor, cond: &Tensor) -> Result<Tensor> {
+    pub fn forward(&self, x: &Tensor, time_steps: &Tensor, asset_ids: &Tensor, cond: &Tensor) -> Result<Tensor> {
         let mut x = self.input_projection.forward(x)?;
         let diffusion_emb = self.diffusion_embedding.forward(time_steps)?;
+        let asset_emb = self.asset_embedding.forward(asset_ids)?;
+        
+        // Combine embeddings (Add)
+        let combined_emb = (diffusion_emb + asset_emb)?;
         
         let mut skip_connections = Vec::new();
 
         for layer in &self.residual_layers {
-            let (next_x, skip) = layer.forward(&x, &diffusion_emb, cond)?;
+            let (next_x, skip) = layer.forward(&x, &combined_emb, cond)?;
             x = next_x;
             skip_connections.push(skip);
         }
