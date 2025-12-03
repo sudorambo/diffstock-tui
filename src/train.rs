@@ -37,6 +37,9 @@ pub async fn train_model_with_data(
     batch_size: Option<usize>,
     learning_rate: Option<f64>,
 ) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    let device = Device::new_cuda(0).unwrap_or(Device::Cpu);
+    #[cfg(not(feature = "cuda"))]
     let device = Device::Cpu;
 
     let epochs = epochs.unwrap_or(EPOCHS);
@@ -52,8 +55,8 @@ pub async fn train_model_with_data(
 
     let _input_dim = 2; // Close Return, Overnight Return
     let input_dim = 2; // Close Return, Overnight Return
-    let hidden_dim = 64;
-    let num_layers = 3;
+    let hidden_dim = 128;
+    let num_layers = 4;
     let diff_steps = 100;
     let num_assets = TRAINING_SYMBOLS.len();
     
