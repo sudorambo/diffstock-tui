@@ -164,7 +164,7 @@ impl EpsilonTheta {
                 residual_channels,
                 dilation_channels,
                 dilation,
-                vb.pp(&format!("residual_block_{}", i)),
+                vb.pp(format!("residual_block_{}", i)),
             )?);
         }
 

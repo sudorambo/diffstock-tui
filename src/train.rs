@@ -6,7 +6,7 @@ use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap, Optimizer};
 use rand::seq::SliceRandom;
-use tracing::{info, warn, error};
+use tracing::{info, error};
 
 pub async fn train_model(
     epochs: Option<usize>,
@@ -14,19 +14,34 @@ pub async fn train_model(
     learning_rate: Option<f64>,
 ) -> Result<()> {
     info!("Training mode started...");
-    let device = Device::Cpu;
-
-    let epochs = epochs.unwrap_or(EPOCHS);
-    let batch_size = batch_size.unwrap_or(BATCH_SIZE);
-    let learning_rate = learning_rate.unwrap_or(LEARNING_RATE);
-
-    info!("Configuration: Epochs={}, Batch Size={}, LR={}", epochs, batch_size, learning_rate);
+    
+    info!("Configuration: Epochs={}, Batch Size={}, LR={}", 
+        epochs.unwrap_or(EPOCHS), 
+        batch_size.unwrap_or(BATCH_SIZE), 
+        learning_rate.unwrap_or(LEARNING_RATE)
+    );
 
     let (train_data, val_data) = fetch_training_data().await?;
 
     if train_data.features.is_empty() {
         return Err(anyhow::anyhow!("No training data available."));
     }
+
+    train_model_with_data(train_data, val_data, epochs, batch_size, learning_rate).await
+}
+
+pub async fn train_model_with_data(
+    train_data: TrainingDataset,
+    val_data: TrainingDataset,
+    epochs: Option<usize>,
+    batch_size: Option<usize>,
+    learning_rate: Option<f64>,
+) -> Result<()> {
+    let device = Device::Cpu;
+
+    let epochs = epochs.unwrap_or(EPOCHS);
+    let batch_size = batch_size.unwrap_or(BATCH_SIZE);
+    let learning_rate = learning_rate.unwrap_or(LEARNING_RATE);
 
     info!("Training Set: {} samples", train_data.features.len());
     info!("Validation Set: {} samples", val_data.features.len());
@@ -219,4 +234,34 @@ async fn fetch_training_data() -> Result<(TrainingDataset, TrainingDataset)> {
 
     // Split 80% Train, 20% Validation
     Ok(full_dataset.split(0.8))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::StockData;
+
+    #[tokio::test]
+    async fn test_train_model_integration() {
+        // 1. Create Mock Data
+        let mock_data = StockData::new_mock("TEST", 200);
+        let dataset = mock_data.prepare_training_data(LOOKBACK, FORECAST, 0);
+        let (train_data, val_data) = dataset.split(0.8);
+
+        // 2. Run Training (Short run)
+        let result = train_model_with_data(
+            train_data,
+            val_data,
+            Some(1), // 1 Epoch
+            Some(16), // Small batch
+            Some(1e-3)
+        ).await;
+
+        assert!(result.is_ok());
+        
+        // Cleanup
+        if std::path::Path::new("model_weights.safetensors").exists() {
+            std::fs::remove_file("model_weights.safetensors").unwrap();
+        }
+    }
 }

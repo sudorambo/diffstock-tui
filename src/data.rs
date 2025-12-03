@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc, TimeZone};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 /// Represents a single candlestick data point (OHLCV).
 #[derive(Clone, Debug)]
@@ -269,7 +269,7 @@ impl StockData {
             });
 
             current_price = close;
-            current_date = current_date + Duration::days(1);
+            current_date += Duration::days(1);
         }
 
         Self {
@@ -421,12 +421,12 @@ mod tests {
         // Check normalization (mean should be close to 0, std close to 1)
         // This is per-window normalization, so we check one window
         let close_vals: Vec<f64> = first_feature.iter().step_by(2).cloned().collect();
-        let mean = close_vals.iter().sum::<f64>() / close_vals.len() as f64;
+        let _mean = close_vals.iter().sum::<f64>() / close_vals.len() as f64;
         // Since we normalized, the mean of the *original* window was subtracted.
         // The values in `first_feature` are already normalized.
         // So their mean should be ~0 and std ~1.
         
-        let feat_mean = first_feature.iter().sum::<f64>() / first_feature.len() as f64;
+        let _feat_mean = first_feature.iter().sum::<f64>() / first_feature.len() as f64;
         // Note: we normalize close and overnight returns together? 
         // In prepare_training_data:
         // let normalized_features: Vec<f64> = window_features.iter().flat_map(|f| {

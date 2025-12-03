@@ -27,12 +27,12 @@
     - Verify shape of output tensors.
     - Verify normalization (mean ~0, std ~1).
 - [x] Add unit tests for `GaussianDiffusion` logic.
-- [ ] Add integration test with mocked network calls.
+- [x] Add integration test with mocked network calls.
 
 ## 5. Code Quality & Documentation
 **Goal**: Maintainability.
 - [x] Add doc comments (`///`) to public structs and functions.
-- [ ] Run `cargo clippy` and fix warnings.
+- [x] Run `cargo clippy` and fix warnings.
 - [x] Refactor `train_model` to be more modular (separate data loading, model init, training loop).
 
 ## 6. Feature Enhancements

@@ -92,7 +92,7 @@ async fn main() -> io::Result<()> {
             "DiffStock",
             options,
             Box::new(|_cc| Ok(Box::new(gui::GuiApp::new(App::new())))),
-        ).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        ).map_err(|e| io::Error::other(e.to_string()))?;
         return Ok(());
     }
 

@@ -43,8 +43,8 @@ impl App {
 
     pub fn tick(&mut self) {
         // Check for data fetch results
-        if let Some(rx) = &mut self.data_rx {
-            if let Ok(res) = rx.try_recv() {
+        if let Some(rx) = &mut self.data_rx 
+            && let Ok(res) = rx.try_recv() {
                 match res {
                     Ok(data) => {
                         let data = Arc::new(data);
@@ -75,7 +75,6 @@ impl App {
                 }
                 self.data_rx = None;
             }
-        }
 
         // Check for progress updates
         if let Some(rx) = &mut self.progress_rx {
@@ -85,8 +84,8 @@ impl App {
         }
 
         // Check for result
-        if let Some(rx) = &mut self.result_rx {
-            if let Ok(res) = rx.try_recv() {
+        if let Some(rx) = &mut self.result_rx 
+            && let Ok(res) = rx.try_recv() {
                 match res {
                     Ok(forecast) => {
                         self.forecast = Some(forecast);
@@ -101,7 +100,6 @@ impl App {
                 self.progress_rx = None;
                 self.result_rx = None;
             }
-        }
     }
 
     pub fn trigger_fetch(&mut self) {
@@ -124,9 +122,9 @@ impl App {
 
             self.tick();
 
-            if event::poll(std::time::Duration::from_millis(16))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
+            if event::poll(std::time::Duration::from_millis(16))? 
+                && let Event::Key(key) = event::read()? 
+                && key.kind == KeyEventKind::Press {
                         match self.state {
                             AppState::Input => match key.code {
                                 KeyCode::Char(c) => self.input.push(c),
@@ -154,10 +152,8 @@ impl App {
                                 _ => {}
                             }
                         }
-                    }
                 }
             }
-        }
         Ok(())
     }
 }
