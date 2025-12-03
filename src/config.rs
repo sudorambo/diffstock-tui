@@ -6,5 +6,5 @@ pub const LEARNING_RATE: f64 = 1e-3;
 
 pub const TRAINING_SYMBOLS: &[&str] = &[
     "SPY", "DIA", "QQQ", "XLK", "XLI", "XLF", "XLC", "XLY", "XLRE", "XLV", "XLU", "XLP", "XLE",
-    "XLB",
+    "XLB", "ARKK", "NVDA", "QQQI", "RDVI",
 ];

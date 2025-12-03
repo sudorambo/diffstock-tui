@@ -18,27 +18,15 @@
 ## Requirements
 
 *   **Rust**: Stable or Nightly (2024 edition support required).
-*   **CUDA (Optional)**: For GPU acceleration, you must have the CUDA Toolkit installed (specifically `nvcc`).
-    *   If you do not have a GPU or CUDA installed, the application will default to CPU mode.
 
 ## Installation
 
 ```bash
 git clone https://github.com/sudorambo/diffstock-tui.git
 cd diffstock-tui
-# Build for CPU (default)
+# Build for CPU
 cargo build --release
-
-# Build with CUDA support (requires CUDA Toolkit)
-cargo build --release --features cuda
 ```
-
-## Troubleshooting
-
-### Failed to run custom build command for `cudarc`
-If you see an error like `Failed to execute nvcc: No such file or directory`, it means you are trying to build with the `cuda` feature enabled but do not have the CUDA Toolkit installed.
-*   **Solution**: Run `cargo build --release` without the `--features cuda` flag to build for CPU.
-*   **Solution**: Install the CUDA Toolkit if you want GPU support.
 
 ## Usage
 

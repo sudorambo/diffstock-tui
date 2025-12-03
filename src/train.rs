@@ -37,9 +37,6 @@ pub async fn train_model_with_data(
     batch_size: Option<usize>,
     learning_rate: Option<f64>,
 ) -> Result<()> {
-    #[cfg(feature = "cuda")]
-    let device = Device::new_cuda(0).unwrap_or(Device::Cpu);
-    #[cfg(not(feature = "cuda"))]
     let device = Device::Cpu;
 
     let epochs = epochs.unwrap_or(EPOCHS);
