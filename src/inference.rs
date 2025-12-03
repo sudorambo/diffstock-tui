@@ -73,8 +73,8 @@ pub async fn run_inference(
 
     // 2. Initialize Model
     let input_dim = 2;
-    let hidden_dim = 64;
-    let num_layers = 3;
+    let hidden_dim = 128;
+    let num_layers = 4;
     let diff_steps = 100;
     let num_assets = TRAINING_SYMBOLS.len();
 
