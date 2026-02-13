@@ -10,7 +10,7 @@
 
 *   **Generative AI**: TimeGrad-inspired diffusion model (LSTM Encoder + WaveNet Denoiser).
 *   **Multi-Asset Training**: Learns asset-specific patterns using ID embeddings.
-*   **Robust Training**: Includes validation sets, model checkpointing (saves best weights), and configurable hyperparameters.
+*   **Robust Training**: Includes validation sets, model checkpointing (saves best weights), early stopping, and configurable hyperparameters.
 *   **Probabilistic Inference**: Generates P10-P90 confidence intervals via 500+ Monte Carlo paths.
 *   **Efficient Data**: Local caching (`.cache/`) and retry logic for Yahoo Finance API.
 *   **Dual Interface**: Keyboard-driven TUI (`ratatui`) and interactive GUI (`egui`).
@@ -45,14 +45,14 @@ cargo run --release -- --train
 
 **Custom Hyperparameters:**
 ```bash
-cargo run --release -- --train --epochs 100 --batch-size 32 --learning-rate 0.0005
+cargo run --release -- --train --epochs 100 --batch-size 32 --learning-rate 0.0005 --patience 30
 ```
 
 **Train on GPU:**
 ```bash
 cargo run --release --features cuda -- --train --cuda
 ```
-*Configuration (tickers, defaults) can be edited in `src/config.rs`.*
+Training stops early if validation loss doesn't improve for `--patience` epochs (default: 20). Configuration (tickers, defaults) can be edited in `src/config.rs`.
 
 ### 2. Forecasting
 Run the interactive interface to visualize forecasts.

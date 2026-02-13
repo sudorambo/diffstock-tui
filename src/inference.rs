@@ -1,7 +1,7 @@
 use crate::data::StockData;
 use crate::diffusion::GaussianDiffusion;
 use crate::models::time_grad::{EpsilonTheta, RNNEncoder};
-use crate::config::{get_device, TRAINING_SYMBOLS};
+use crate::config::{get_device, DIFF_STEPS, HIDDEN_DIM, INPUT_DIM, NUM_LAYERS, TRAINING_SYMBOLS};
 use anyhow::Result;
 use candle_core::{DType, Tensor};
 use candle_nn::VarBuilder;
@@ -73,23 +73,19 @@ pub async fn run_inference(
     let asset_id_tensor = Tensor::new(&[asset_id as u32], &device)?;
 
     // 2. Initialize Model
-    let input_dim = 2;
-    let hidden_dim = 128;
-    let num_layers = 4;
-    let diff_steps = 100;
     let num_assets = TRAINING_SYMBOLS.len();
 
     // Load weights if available
     let vb = if std::path::Path::new("model_weights.safetensors").exists() {
         unsafe { VarBuilder::from_mmaped_safetensors(&["model_weights.safetensors"], DType::F32, &device)? }
     } else {
-        // Warn user? For now just random init
+        warn!("model_weights.safetensors not found — model is untrained. Predictions will be meaningless. Run with --train first.");
         VarBuilder::zeros(DType::F32, &device)
     };
 
-    let encoder = RNNEncoder::new(input_dim, hidden_dim, vb.pp("encoder"))?;
-    let model = EpsilonTheta::new(1, hidden_dim, hidden_dim, num_layers, num_assets, vb.pp("model"))?;
-    let diffusion = GaussianDiffusion::new(diff_steps, &device)?;
+    let encoder = RNNEncoder::new(INPUT_DIM, HIDDEN_DIM, vb.pp("encoder"))?;
+    let model = EpsilonTheta::new(1, HIDDEN_DIM, HIDDEN_DIM, NUM_LAYERS, num_assets, vb.pp("model"))?;
+    let diffusion = GaussianDiffusion::new(DIFF_STEPS, &device)?;
 
     // 3. Encode History
     let hidden_state = encoder.forward(&context_tensor)?;
@@ -208,4 +204,96 @@ pub async fn run_backtest(data: Arc<StockData>, use_cuda: bool) -> Result<()> {
 
     println!("Coverage Probability (P10-P90): {:.2}%", (inside_cone as f64 / horizon as f64) * 100.0);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{FORECAST, LOOKBACK};
+    use crate::data::StockData;
+    use crate::train::train_model_with_data;
+
+    #[tokio::test]
+    async fn test_inference_with_mock_data() {
+        // 1. Create mock data and train 1 epoch to produce weights
+        let mock_train = StockData::new_mock("SPY", 200);
+        let dataset = mock_train.prepare_training_data(LOOKBACK, FORECAST, 0);
+        let (train_data, val_data) = dataset.split(0.8);
+
+        train_model_with_data(
+            train_data,
+            val_data,
+            Some(1),
+            Some(16),
+            Some(1e-3),
+            None,
+            false,
+        )
+        .await
+        .expect("training should succeed");
+
+        // 2. Run inference with small horizon/sims
+        let mock_infer = StockData::new_mock("SPY", 200);
+        let data = Arc::new(mock_infer);
+        let horizon = 5;
+        let num_sims = 20;
+
+        let forecast = run_inference(data, horizon, num_sims, None, false)
+            .await
+            .expect("inference should succeed");
+
+        // 3. Verify output structure
+        assert_eq!(forecast.p10.len(), horizon);
+        assert_eq!(forecast.p50.len(), horizon);
+        assert_eq!(forecast.p90.len(), horizon);
+
+        // Prices should be positive
+        for i in 0..horizon {
+            assert!(forecast.p10[i].1 > 0.0, "p10 price should be > 0");
+            assert!(forecast.p50[i].1 > 0.0, "p50 price should be > 0");
+            assert!(forecast.p90[i].1 > 0.0, "p90 price should be > 0");
+        }
+
+        // Percentile ordering: p10 <= p50 <= p90
+        for i in 0..horizon {
+            assert!(
+                forecast.p10[i].1 <= forecast.p50[i].1,
+                "p10 ({}) should <= p50 ({}) at step {}",
+                forecast.p10[i].1,
+                forecast.p50[i].1,
+                i
+            );
+            assert!(
+                forecast.p50[i].1 <= forecast.p90[i].1,
+                "p50 ({}) should <= p90 ({}) at step {}",
+                forecast.p50[i].1,
+                forecast.p90[i].1,
+                i
+            );
+        }
+
+        // Cleanup
+        if std::path::Path::new("model_weights.safetensors").exists() {
+            std::fs::remove_file("model_weights.safetensors").unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_inference_without_weights() {
+        // Ensure no weights file exists
+        let _ = std::fs::remove_file("model_weights.safetensors");
+
+        let mock_data = StockData::new_mock("SPY", 200);
+        let data = Arc::new(mock_data);
+
+        // Should run without panicking (zeros fallback)
+        let result = run_inference(data, 3, 10, None, false).await;
+        assert!(result.is_ok(), "inference with zeros fallback should not panic");
+
+        let forecast = result.unwrap();
+        assert_eq!(forecast.p50.len(), 3);
+
+        // Cleanup (shouldn't exist, but just in case)
+        let _ = std::fs::remove_file("model_weights.safetensors");
+    }
 }

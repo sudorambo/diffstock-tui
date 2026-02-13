@@ -57,6 +57,10 @@ struct Args {
     #[arg(long)]
     learning_rate: Option<f64>,
 
+    /// Early stopping patience — stop training after this many epochs without improvement (default: 20). Ignored if --train is not set.
+    #[arg(long)]
+    patience: Option<usize>,
+
     /// Use CUDA GPU acceleration (requires --features cuda at compile time)
     #[arg(long)]
     cuda: bool,
@@ -68,7 +72,7 @@ async fn main() -> io::Result<()> {
     let args = Args::parse();
 
     if args.train {
-        match train::train_model(args.epochs, args.batch_size, args.learning_rate, args.cuda).await {
+        match train::train_model(args.epochs, args.batch_size, args.learning_rate, args.patience, args.cuda).await {
             Ok(_) => info!("Training completed successfully."),
             Err(e) => error!("Training failed: {}", e),
         }

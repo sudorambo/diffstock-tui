@@ -19,7 +19,7 @@ cargo run --release -- --gui
 
 # Train model (fetches 5y data for 18 symbols, saves best weights to model_weights.safetensors)
 cargo run --release -- --train
-cargo run --release -- --train --epochs 100 --batch-size 32 --learning-rate 0.0005
+cargo run --release -- --train --epochs 100 --batch-size 32 --learning-rate 0.0005 --patience 30
 
 # Train/run on GPU (requires --features cuda at compile time)
 cargo run --release --features cuda -- --train --cuda
@@ -35,6 +35,7 @@ cargo test --release
 cargo test --release data::tests
 cargo test --release diffusion::tests
 cargo test --release train::tests
+cargo test --release inference::tests
 ```
 
 ## Architecture
@@ -51,7 +52,7 @@ Probabilistic stock forecasting app using a TimeGrad-inspired conditional diffus
 
 **Diffusion** (`diffusion.rs`) — Gaussian diffusion with linear beta schedule (100 steps). Forward process adds noise; reverse process iteratively denoises via the model.
 
-**Training** (`train.rs`) — Trains on multi-asset data. Samples random timesteps, adds noise, predicts noise (MSE loss). AdamW optimizer with LR decay (0.5x every 50 epochs). Checkpoints best model by validation loss to `model_weights.safetensors`.
+**Training** (`train.rs`) — Trains on multi-asset data. Samples random timesteps, adds noise, predicts noise (MSE loss). AdamW optimizer with LR decay (0.5x every 50 epochs). Checkpoints best model by validation loss to `model_weights.safetensors`. Early stopping halts training when validation loss plateaus (configurable via `--patience`, default 20 epochs).
 
 **Inference** (`inference.rs`) — Loads saved weights, runs autoregressive diffusion sampling over 500+ Monte Carlo paths, outputs P10/P30/P50/P70/P90 percentile price cones.
 
@@ -69,7 +70,7 @@ Probabilistic stock forecasting app using a TimeGrad-inspired conditional diffus
 
 ### Key Constants (`config.rs`)
 
-`LOOKBACK=50`, `FORECAST=10`, `BATCH_SIZE=64`, `EPOCHS=200`, `LEARNING_RATE=1e-3`, `TRAINING_SYMBOLS` (18 ETFs/stocks).
+`LOOKBACK=50`, `FORECAST=10`, `BATCH_SIZE=64`, `EPOCHS=200`, `LEARNING_RATE=1e-3`, `INPUT_DIM=2`, `HIDDEN_DIM=128`, `NUM_LAYERS=4`, `DIFF_STEPS=100`, `PATIENCE=20`, `TRAINING_SYMBOLS` (18 ETFs/stocks).
 
 ## Key Patterns
 

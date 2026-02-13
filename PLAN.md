@@ -40,7 +40,25 @@
 - [x] **Validation Set**: Split data into Train/Validation to monitor overfitting.
 - [x] **Multi-Asset Training**: Train on multiple assets simultaneously with ID embeddings.
 
-## 7. CUDA / GPU Support
+## 7. Centralized Model Hyperparameters
+**Goal**: Eliminate silent weight shape mismatches between training and inference.
+- [x] Move `INPUT_DIM`, `HIDDEN_DIM`, `NUM_LAYERS`, `DIFF_STEPS` to `config.rs` as constants.
+- [x] Update `train.rs` and `inference.rs` to import from `config.rs` (removed duplicated local bindings).
+- [x] Remove dead `_input_dim` variable in `train.rs`.
+
+## 8. Training Robustness
+**Goal**: Prevent rare OOB panics and reduce wasted compute.
+- [x] Clamp timestep indices after `floor()` to `[0, DIFF_STEPS-1]` in both training and validation loops.
+- [x] Fix validation loop `to_vec1` roundtrip — replaced with direct `to_dtype(DType::U32)`.
+- [x] Add early stopping with configurable `--patience` CLI arg (default: 20 epochs).
+
+## 9. Inference Improvements
+**Goal**: Better UX and test coverage for the user-facing path.
+- [x] Add `tracing::warn!` when `model_weights.safetensors` is missing (zeros fallback).
+- [x] Add `test_inference_with_mock_data` — trains 1 epoch, runs inference, verifies output structure and percentile ordering.
+- [x] Add `test_inference_without_weights` — verifies zeros fallback doesn't panic.
+
+## 10. CUDA / GPU Support
 **Goal**: Enable GPU-accelerated training and inference.
 - [x] Add `cuda` cargo feature flag (`candle-core/cuda`, `candle-nn/cuda`).
 - [x] Add `get_device(use_cuda)` helper in `config.rs` with automatic CPU fallback.

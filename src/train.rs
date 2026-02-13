@@ -1,4 +1,4 @@
-use crate::config::{get_device, BATCH_SIZE, EPOCHS, FORECAST, LEARNING_RATE, LOOKBACK, TRAINING_SYMBOLS};
+use crate::config::{get_device, BATCH_SIZE, DIFF_STEPS, EPOCHS, FORECAST, HIDDEN_DIM, INPUT_DIM, LEARNING_RATE, LOOKBACK, NUM_LAYERS, PATIENCE, TRAINING_SYMBOLS};
 use crate::data::{StockData, TrainingDataset};
 use crate::diffusion::GaussianDiffusion;
 use crate::models::time_grad::{EpsilonTheta, RNNEncoder};
@@ -12,6 +12,7 @@ pub async fn train_model(
     epochs: Option<usize>,
     batch_size: Option<usize>,
     learning_rate: Option<f64>,
+    patience: Option<usize>,
     use_cuda: bool,
 ) -> Result<()> {
     info!("Training mode started...");
@@ -28,7 +29,7 @@ pub async fn train_model(
         return Err(anyhow::anyhow!("No training data available."));
     }
 
-    train_model_with_data(train_data, val_data, epochs, batch_size, learning_rate, use_cuda).await
+    train_model_with_data(train_data, val_data, epochs, batch_size, learning_rate, patience, use_cuda).await
 }
 
 pub async fn train_model_with_data(
@@ -37,6 +38,7 @@ pub async fn train_model_with_data(
     epochs: Option<usize>,
     batch_size: Option<usize>,
     learning_rate: Option<f64>,
+    patience: Option<usize>,
     use_cuda: bool,
 ) -> Result<()> {
     let device = get_device(use_cuda);
@@ -52,16 +54,11 @@ pub async fn train_model_with_data(
     let varmap = VarMap::new();
     let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
-    let _input_dim = 2; // Close Return, Overnight Return
-    let input_dim = 2; // Close Return, Overnight Return
-    let hidden_dim = 128;
-    let num_layers = 4;
-    let diff_steps = 100;
     let num_assets = TRAINING_SYMBOLS.len();
-    
-    let encoder = RNNEncoder::new(input_dim, hidden_dim, vb.pp("encoder"))?;
-    let model = EpsilonTheta::new(1, hidden_dim, hidden_dim, num_layers, num_assets, vb.pp("model"))?; // input_channels=1 (target is close return)
-    let diffusion = GaussianDiffusion::new(diff_steps, &device)?;
+
+    let encoder = RNNEncoder::new(INPUT_DIM, HIDDEN_DIM, vb.pp("encoder"))?;
+    let model = EpsilonTheta::new(1, HIDDEN_DIM, HIDDEN_DIM, NUM_LAYERS, num_assets, vb.pp("model"))?; // input_channels=1 (target is close return)
+    let diffusion = GaussianDiffusion::new(DIFF_STEPS, &device)?;
 
     let mut opt = candle_nn::AdamW::new_lr(varmap.all_vars(), learning_rate)?;
 
@@ -73,6 +70,8 @@ pub async fn train_model_with_data(
     let num_val_batches = if num_val_samples > 0 { num_val_samples / batch_size } else { 0 };
 
     let mut best_val_loss = f64::INFINITY;
+    let patience = patience.unwrap_or(PATIENCE);
+    let mut epochs_without_improvement: usize = 0;
 
     for epoch in 0..epochs {
         let mut total_train_loss = 0.0;
@@ -110,10 +109,12 @@ pub async fn train_model_with_data(
             let cond = cond.unsqueeze(2)?; 
 
             // Sample t
-            let t = Tensor::rand(0.0f32, diff_steps as f32, (batch_size,), &device)?.floor()?;
-            
+            let t = Tensor::rand(0.0f32, DIFF_STEPS as f32, (batch_size,), &device)?
+                .floor()?
+                .clamp(0.0, (DIFF_STEPS - 1) as f64)?;
+
             let epsilon = Tensor::randn(0.0f32, 1.0f32, x_0.shape(), &device)?;
-            
+
             let t_u32 = t.to_dtype(DType::U32)?;
             
             let alpha_bar_t = diffusion.alpha_bar.index_select(&t_u32, 0)?; 
@@ -162,11 +163,12 @@ pub async fn train_model_with_data(
                 let cond = encoder.forward(&x_hist)?;
                 let cond = cond.unsqueeze(2)?;
 
-                let t = Tensor::rand(0.0f32, diff_steps as f32, (batch_size,), &device)?.floor()?;
+                let t = Tensor::rand(0.0f32, DIFF_STEPS as f32, (batch_size,), &device)?
+                    .floor()?
+                    .clamp(0.0, (DIFF_STEPS - 1) as f64)?;
                 let epsilon = Tensor::randn(0.0f32, 1.0f32, x_0.shape(), &device)?;
 
-                let t_vec: Vec<u32> = t.to_vec1::<f32>()?.iter().map(|&x| x as u32).collect();
-                let t_u32 = Tensor::new(t_vec.as_slice(), &device)?;
+                let t_u32 = t.to_dtype(DType::U32)?;
 
                 let alpha_bar_t = diffusion.alpha_bar.index_select(&t_u32, 0)?;
                 let sqrt_alpha_bar_t = alpha_bar_t.sqrt()?;
@@ -192,8 +194,15 @@ pub async fn train_model_with_data(
         // Checkpoint
         if avg_val_loss < best_val_loss {
             best_val_loss = avg_val_loss;
+            epochs_without_improvement = 0;
             info!("New best model found! Saving weights...");
             varmap.save("model_weights.safetensors")?;
+        } else {
+            epochs_without_improvement += 1;
+            if epochs_without_improvement >= patience {
+                info!("Early stopping: no improvement for {} epochs. Best val loss: {:.6}", patience, best_val_loss);
+                break;
+            }
         }
 
         if (epoch + 1) % 50 == 0 {
@@ -256,6 +265,7 @@ mod tests {
             Some(1), // 1 Epoch
             Some(16), // Small batch
             Some(1e-3),
+            None, // Default patience
             false, // CPU for tests
         ).await;
 
