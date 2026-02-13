@@ -1,3 +1,29 @@
+use candle_core::Device;
+use tracing::{info, warn};
+
+pub fn get_device(use_cuda: bool) -> Device {
+    if use_cuda {
+        #[cfg(feature = "cuda")]
+        {
+            match Device::new_cuda(0) {
+                Ok(device) => {
+                    info!("Using CUDA device 0");
+                    return device;
+                }
+                Err(e) => {
+                    warn!("Failed to initialize CUDA: {}. Falling back to CPU.", e);
+                }
+            }
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            warn!("--cuda flag set but binary was compiled without the 'cuda' feature. Falling back to CPU.");
+        }
+    }
+    info!("Using CPU device");
+    Device::Cpu
+}
+
 pub const LOOKBACK: usize = 50;
 pub const FORECAST: usize = 10;
 pub const BATCH_SIZE: usize = 64;

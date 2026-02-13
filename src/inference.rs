@@ -1,9 +1,9 @@
 use crate::data::StockData;
 use crate::diffusion::GaussianDiffusion;
 use crate::models::time_grad::{EpsilonTheta, RNNEncoder};
-use crate::config::TRAINING_SYMBOLS;
+use crate::config::{get_device, TRAINING_SYMBOLS};
 use anyhow::Result;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Tensor};
 use candle_nn::VarBuilder;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -25,9 +25,10 @@ pub async fn run_inference(
     horizon: usize,
     num_simulations: usize,
     progress_tx: Option<Sender<f64>>,
+    use_cuda: bool,
 ) -> Result<ForecastData> {
     // 1. Setup Device and Data
-    let device = Device::Cpu;
+    let device = get_device(use_cuda);
     
     // Prepare Context Data (Last 50 days)
     let context_len = 50;
@@ -167,7 +168,7 @@ pub async fn run_inference(
     })
 }
 
-pub async fn run_backtest(data: Arc<StockData>) -> Result<()> {
+pub async fn run_backtest(data: Arc<StockData>, use_cuda: bool) -> Result<()> {
     println!("Running Backtest...");
     let horizon = 10;
     let num_simulations = 500;
@@ -189,7 +190,7 @@ pub async fn run_backtest(data: Arc<StockData>) -> Result<()> {
         history: train_history,
     });
 
-    let forecast = run_inference(train_data, horizon, num_simulations, None).await?;
+    let forecast = run_inference(train_data, horizon, num_simulations, None, use_cuda).await?;
 
     // Calculate Coverage
     let mut inside_cone = 0;

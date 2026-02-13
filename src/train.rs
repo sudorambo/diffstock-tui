@@ -1,9 +1,9 @@
-use crate::config::{BATCH_SIZE, EPOCHS, FORECAST, LEARNING_RATE, LOOKBACK, TRAINING_SYMBOLS};
+use crate::config::{get_device, BATCH_SIZE, EPOCHS, FORECAST, LEARNING_RATE, LOOKBACK, TRAINING_SYMBOLS};
 use crate::data::{StockData, TrainingDataset};
 use crate::diffusion::GaussianDiffusion;
 use crate::models::time_grad::{EpsilonTheta, RNNEncoder};
 use anyhow::Result;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Tensor};
 use candle_nn::{VarBuilder, VarMap, Optimizer};
 use rand::seq::SliceRandom;
 use tracing::{info, error};
@@ -12,12 +12,13 @@ pub async fn train_model(
     epochs: Option<usize>,
     batch_size: Option<usize>,
     learning_rate: Option<f64>,
+    use_cuda: bool,
 ) -> Result<()> {
     info!("Training mode started...");
-    
-    info!("Configuration: Epochs={}, Batch Size={}, LR={}", 
-        epochs.unwrap_or(EPOCHS), 
-        batch_size.unwrap_or(BATCH_SIZE), 
+
+    info!("Configuration: Epochs={}, Batch Size={}, LR={}",
+        epochs.unwrap_or(EPOCHS),
+        batch_size.unwrap_or(BATCH_SIZE),
         learning_rate.unwrap_or(LEARNING_RATE)
     );
 
@@ -27,7 +28,7 @@ pub async fn train_model(
         return Err(anyhow::anyhow!("No training data available."));
     }
 
-    train_model_with_data(train_data, val_data, epochs, batch_size, learning_rate).await
+    train_model_with_data(train_data, val_data, epochs, batch_size, learning_rate, use_cuda).await
 }
 
 pub async fn train_model_with_data(
@@ -36,8 +37,9 @@ pub async fn train_model_with_data(
     epochs: Option<usize>,
     batch_size: Option<usize>,
     learning_rate: Option<f64>,
+    use_cuda: bool,
 ) -> Result<()> {
-    let device = Device::Cpu;
+    let device = get_device(use_cuda);
 
     let epochs = epochs.unwrap_or(EPOCHS);
     let batch_size = batch_size.unwrap_or(BATCH_SIZE);
@@ -112,8 +114,7 @@ pub async fn train_model_with_data(
             
             let epsilon = Tensor::randn(0.0f32, 1.0f32, x_0.shape(), &device)?;
             
-            let t_vec: Vec<u32> = t.to_vec1::<f32>()?.iter().map(|&x| x as u32).collect();
-            let t_u32 = Tensor::new(t_vec.as_slice(), &device)?;
+            let t_u32 = t.to_dtype(DType::U32)?;
             
             let alpha_bar_t = diffusion.alpha_bar.index_select(&t_u32, 0)?; 
             let sqrt_alpha_bar_t = alpha_bar_t.sqrt()?;
@@ -254,7 +255,8 @@ mod tests {
             val_data,
             Some(1), // 1 Epoch
             Some(16), // Small batch
-            Some(1e-3)
+            Some(1e-3),
+            false, // CPU for tests
         ).await;
 
         assert!(result.is_ok());

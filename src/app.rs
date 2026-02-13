@@ -23,10 +23,11 @@ pub struct App {
     pub data_rx: Option<Receiver<anyhow::Result<StockData>>>,
     pub progress_rx: Option<Receiver<f64>>,
     pub result_rx: Option<Receiver<anyhow::Result<ForecastData>>>,
+    pub use_cuda: bool,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(use_cuda: bool) -> Self {
         Self {
             should_quit: false,
             state: AppState::Input,
@@ -38,6 +39,7 @@ impl App {
             data_rx: None,
             progress_rx: None,
             result_rx: None,
+            use_cuda,
         }
     }
 
@@ -61,10 +63,11 @@ impl App {
                         self.result_rx = Some(res_rx);
 
                         let data_clone = data.clone();
-                        
+                        let use_cuda = self.use_cuda;
+
                         // Spawn Inference Task
                         tokio::spawn(async move {
-                            let res = inference::run_inference(data_clone, 50, 500, Some(prog_tx)).await;
+                            let res = inference::run_inference(data_clone, 50, 500, Some(prog_tx), use_cuda).await;
                             let _ = res_tx.send(res).await;
                         });
                     }

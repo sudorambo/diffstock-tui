@@ -56,6 +56,10 @@ struct Args {
     /// Learning rate for training (default: 0.001). Ignored if --train is not set.
     #[arg(long)]
     learning_rate: Option<f64>,
+
+    /// Use CUDA GPU acceleration (requires --features cuda at compile time)
+    #[arg(long)]
+    cuda: bool,
 }
 
 #[tokio::main]
@@ -64,7 +68,7 @@ async fn main() -> io::Result<()> {
     let args = Args::parse();
 
     if args.train {
-        match train::train_model(args.epochs, args.batch_size, args.learning_rate).await {
+        match train::train_model(args.epochs, args.batch_size, args.learning_rate, args.cuda).await {
             Ok(_) => info!("Training completed successfully."),
             Err(e) => error!("Training failed: {}", e),
         }
@@ -76,7 +80,7 @@ async fn main() -> io::Result<()> {
         match data::fetch_range("SPY", "5y").await {
             Ok(data) => {
                 let data = std::sync::Arc::new(data);
-                match inference::run_backtest(data).await {
+                match inference::run_backtest(data, args.cuda).await {
                     Ok(_) => info!("Backtest completed."),
                     Err(e) => error!("Backtest failed: {}", e),
                 }
@@ -91,13 +95,13 @@ async fn main() -> io::Result<()> {
         eframe::run_native(
             "DiffStock",
             options,
-            Box::new(|_cc| Ok(Box::new(gui::GuiApp::new(App::new())))),
+            Box::new(|_cc| Ok(Box::new(gui::GuiApp::new(App::new(args.cuda))))),
         ).map_err(|e| io::Error::other(e.to_string()))?;
         return Ok(());
     }
 
     let mut terminal = tui::init()?;
-    let mut app = App::new();
+    let mut app = App::new(args.cuda);
     let res = app.run(&mut terminal).await;
     
     tui::restore()?;

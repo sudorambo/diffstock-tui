@@ -39,3 +39,10 @@
 - [x] **Model Checkpointing**: Save best model based on validation loss, not just the last epoch.
 - [x] **Validation Set**: Split data into Train/Validation to monitor overfitting.
 - [x] **Multi-Asset Training**: Train on multiple assets simultaneously with ID embeddings.
+
+## 7. CUDA / GPU Support
+**Goal**: Enable GPU-accelerated training and inference.
+- [x] Add `cuda` cargo feature flag (`candle-core/cuda`, `candle-nn/cuda`).
+- [x] Add `get_device(use_cuda)` helper in `config.rs` with automatic CPU fallback.
+- [x] Add `--cuda` CLI flag threaded through train, inference, app, and GUI.
+- [x] Fix GPU-hostile `to_vec1` roundtrip in training loop (replaced with `to_dtype(DType::U32)`).

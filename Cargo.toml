@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 default = []
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
 
 [dependencies]
 ratatui = "0.29.0"

@@ -18,14 +18,19 @@
 ## Requirements
 
 *   **Rust**: Stable or Nightly (2024 edition support required).
+*   **CUDA Toolkit** (optional): Required only for GPU acceleration via the `cuda` feature.
 
 ## Installation
 
 ```bash
 git clone https://github.com/sudorambo/diffstock-tui.git
 cd diffstock-tui
-# Build for CPU
+
+# Build for CPU (default)
 cargo build --release
+
+# Build with CUDA GPU support (requires CUDA toolkit)
+cargo build --release --features cuda
 ```
 
 ## Usage
@@ -42,6 +47,11 @@ cargo run --release -- --train
 ```bash
 cargo run --release -- --train --epochs 100 --batch-size 32 --learning-rate 0.0005
 ```
+
+**Train on GPU:**
+```bash
+cargo run --release --features cuda -- --train --cuda
+```
 *Configuration (tickers, defaults) can be edited in `src/config.rs`.*
 
 ### 2. Forecasting
@@ -57,6 +67,8 @@ cargo run --release
 ```bash
 cargo run --release -- --gui
 ```
+
+Add `--cuda` to any command above to use GPU acceleration (requires the `cuda` feature at compile time). If CUDA is unavailable at runtime, it falls back to CPU automatically.
 
 ### 3. Backtesting
 Validate performance on historical SPY data.
