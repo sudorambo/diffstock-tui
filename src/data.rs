@@ -1,7 +1,7 @@
-use chrono::{DateTime, Duration, Utc, TimeZone};
+use anyhow::Result;
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 use tracing::{info, warn};
 
 /// Represents a single candlestick data point (OHLCV).
@@ -84,15 +84,15 @@ pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
     if !cache_dir.exists() {
         std::fs::create_dir(cache_dir)?;
     }
-    
+
     let cache_file = cache_dir.join(format!("{}_{}.json", symbol, range));
-    
+
     let response: YahooChartResponse = if cache_file.exists() {
         // Check if cache is fresh (e.g. < 24 hours)
         let metadata = std::fs::metadata(&cache_file)?;
         let modified = metadata.modified()?;
         let age = std::time::SystemTime::now().duration_since(modified)?;
-        
+
         if age.as_secs() < 86400 {
             info!("Loading {} from cache...", symbol);
             let file = std::fs::File::open(&cache_file)?;
@@ -107,11 +107,15 @@ pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
         fetch_from_api(symbol, range, &cache_file).await?
     };
 
-    let result = response.chart.result.first().ok_or(anyhow::anyhow!("No data found"))?;
-    
+    let result = response
+        .chart
+        .result
+        .first()
+        .ok_or(anyhow::anyhow!("No data found"))?;
+
     let mut history = Vec::new();
     let quotes = &result.indicators.quote[0];
-    
+
     for (i, &timestamp) in result.timestamp.iter().enumerate() {
         if let (Some(open), Some(high), Some(low), Some(close), Some(volume)) = (
             quotes.open[i],
@@ -120,7 +124,8 @@ pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
             quotes.close[i],
             quotes.volume[i],
         ) {
-            let date = Utc.timestamp_opt(timestamp, 0)
+            let date = Utc
+                .timestamp_opt(timestamp, 0)
                 .single()
                 .ok_or_else(|| anyhow::anyhow!("invalid timestamp {}", timestamp))?;
             history.push(Candle {
@@ -133,29 +138,33 @@ pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
             });
         }
     }
-    
+
     Ok(StockData {
         symbol: symbol.to_string(),
         history,
     })
 }
 
-async fn fetch_from_api(symbol: &str, range: &str, cache_path: &std::path::Path) -> Result<YahooChartResponse> {
+async fn fetch_from_api(
+    symbol: &str,
+    range: &str,
+    cache_path: &std::path::Path,
+) -> Result<YahooChartResponse> {
     let url = format!(
         "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval=1d",
         symbol, range
     );
-    
+
     let mut attempts = 0;
     let max_attempts = 3;
-    
+
     loop {
         attempts += 1;
         match reqwest::Client::new()
             .get(&url)
             .header("User-Agent", "Mozilla/5.0")
             .send()
-            .await 
+            .await
         {
             Ok(resp) => {
                 match resp.json::<YahooChartResponse>().await {
@@ -164,14 +173,17 @@ async fn fetch_from_api(symbol: &str, range: &str, cache_path: &std::path::Path)
                         let file = std::fs::File::create(cache_path)?;
                         let writer = std::io::BufWriter::new(file);
                         serde_json::to_writer(writer, &resp_json)?;
-                        
+
                         return Ok(resp_json);
                     }
                     Err(e) => {
                         if attempts >= max_attempts {
                             return Err(e.into());
                         }
-                        warn!("Failed to parse JSON for {} (attempt {}/{}): {}", symbol, attempts, max_attempts, e);
+                        warn!(
+                            "Failed to parse JSON for {} (attempt {}/{}): {}",
+                            symbol, attempts, max_attempts, e
+                        );
                     }
                 }
             }
@@ -179,10 +191,13 @@ async fn fetch_from_api(symbol: &str, range: &str, cache_path: &std::path::Path)
                 if attempts >= max_attempts {
                     return Err(e.into());
                 }
-                warn!("Failed to fetch data for {} (attempt {}/{}): {}", symbol, attempts, max_attempts, e);
+                warn!(
+                    "Failed to fetch data for {} (attempt {}/{}): {}",
+                    symbol, attempts, max_attempts, e
+                );
             }
         }
-        
+
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 }
@@ -206,11 +221,19 @@ impl StockData {
             .json::<YahooChartResponse>()
             .await?;
 
-        let result = resp.chart.result.first().ok_or(anyhow::anyhow!("No data found"))?;
-        let quote = result.indicators.quote.first().ok_or(anyhow::anyhow!("No quotes found"))?;
-        
+        let result = resp
+            .chart
+            .result
+            .first()
+            .ok_or(anyhow::anyhow!("No data found"))?;
+        let quote = result
+            .indicators
+            .quote
+            .first()
+            .ok_or(anyhow::anyhow!("No quotes found"))?;
+
         let mut history = Vec::new();
-        
+
         for (i, &timestamp) in result.timestamp.iter().enumerate() {
             if let (Some(open), Some(high), Some(low), Some(close), Some(volume)) = (
                 quote.open.get(i).and_then(|v| *v),
@@ -219,7 +242,8 @@ impl StockData {
                 quote.close.get(i).and_then(|v| *v),
                 quote.volume.get(i).and_then(|v| *v),
             ) {
-                let date = Utc.timestamp_opt(timestamp, 0)
+                let date = Utc
+                    .timestamp_opt(timestamp, 0)
                     .single()
                     .ok_or_else(|| anyhow::anyhow!("invalid timestamp {}", timestamp))?;
                 history.push(Candle {
@@ -251,11 +275,13 @@ impl StockData {
     pub fn stats(&self) -> (f64, f64) {
         let returns = self.log_returns();
         let n = returns.len() as f64;
-        if n == 0.0 { return (0.0, 0.0); }
+        if n == 0.0 {
+            return (0.0, 0.0);
+        }
 
         let mean = returns.iter().sum::<f64>() / n;
         let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
-        
+
         (mean, variance.sqrt())
     }
 
@@ -263,11 +289,24 @@ impl StockData {
         let last = self.history.last().unwrap();
         let current_price = last.close;
         let pivot = (last.high + last.low + last.close) / 3.0;
-        
-        let support = self.history.iter().map(|c| c.low).fold(f64::INFINITY, |a, b| a.min(b));
-        let resistance = self.history.iter().map(|c| c.high).fold(f64::NEG_INFINITY, |a, b| a.max(b));
 
-        Analysis { current_price, support, resistance, pivot }
+        let support = self
+            .history
+            .iter()
+            .map(|c| c.low)
+            .fold(f64::INFINITY, |a, b| a.min(b));
+        let resistance = self
+            .history
+            .iter()
+            .map(|c| c.high)
+            .fold(f64::NEG_INFINITY, |a, b| a.max(b));
+
+        Analysis {
+            current_price,
+            support,
+            resistance,
+            pivot,
+        }
     }
 
     #[allow(dead_code)]
@@ -324,11 +363,11 @@ impl TrainingDataset {
     pub fn split(self, train_ratio: f64) -> (Self, Self) {
         let n = self.features.len();
         let train_size = (n as f64 * train_ratio) as usize;
-        
+
         let (train_features, val_features) = self.features.split_at(train_size);
         let (train_targets, val_targets) = self.targets.split_at(train_size);
         let (train_ids, val_ids) = self.asset_ids.split_at(train_size);
-        
+
         (
             Self {
                 features: train_features.to_vec(),
@@ -339,7 +378,7 @@ impl TrainingDataset {
                 features: val_features.to_vec(),
                 targets: val_targets.to_vec(),
                 asset_ids: val_ids.to_vec(),
-            }
+            },
         )
     }
 }
@@ -351,7 +390,12 @@ impl StockData {
     /// * `lookback` - Number of past days to use as input context.
     /// * `forecast` - Number of future days to predict.
     /// * `asset_id` - Unique identifier for the asset.
-    pub fn prepare_training_data(&self, lookback: usize, forecast: usize, asset_id: usize) -> TrainingDataset {
+    pub fn prepare_training_data(
+        &self,
+        lookback: usize,
+        forecast: usize,
+        asset_id: usize,
+    ) -> TrainingDataset {
         let mut features = Vec::new();
         let mut targets = Vec::new();
         let mut asset_ids = Vec::new();
@@ -359,16 +403,20 @@ impl StockData {
         // Calculate returns
         // We need at least lookback + forecast + 1 data points
         if self.history.len() < lookback + forecast + 1 {
-            return TrainingDataset { features, targets, asset_ids };
+            return TrainingDataset {
+                features,
+                targets,
+                asset_ids,
+            };
         }
-        
+
         let mut all_close_returns = Vec::with_capacity(self.history.len());
         let mut all_overnight_returns = Vec::with_capacity(self.history.len());
 
         for i in 1..self.history.len() {
-            let close_ret = (self.history[i].close / self.history[i-1].close).ln();
-            let overnight_ret = (self.history[i].open / self.history[i-1].close).ln();
-            
+            let close_ret = (self.history[i].close / self.history[i - 1].close).ln();
+            let overnight_ret = (self.history[i].open / self.history[i - 1].close).ln();
+
             all_close_returns.push(close_ret);
             all_overnight_returns.push(overnight_ret);
         }
@@ -376,44 +424,49 @@ impl StockData {
         // Create sliding windows
         let total_returns = all_close_returns.len();
         if total_returns < lookback + forecast {
-             return TrainingDataset { features, targets, asset_ids };
+            return TrainingDataset {
+                features,
+                targets,
+                asset_ids,
+            };
         }
 
         for j in 0..total_returns - lookback - forecast {
             let mut window_features = Vec::with_capacity(lookback);
             for k in 0..lookback {
-                window_features.push(vec![
-                    all_close_returns[j+k],
-                    all_overnight_returns[j+k]
-                ]);
+                window_features.push(vec![all_close_returns[j + k], all_overnight_returns[j + k]]);
             }
 
             let mut window_targets = Vec::with_capacity(forecast);
             for k in 0..forecast {
-                window_targets.push(all_close_returns[j+lookback+k]);
+                window_targets.push(all_close_returns[j + lookback + k]);
             }
-            
+
             // Z-Score Normalization per window
             let close_vals: Vec<f64> = window_features.iter().map(|f| f[0]).collect();
             let mean = close_vals.iter().sum::<f64>() / lookback as f64;
-            let variance = close_vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (lookback as f64 - 1.0);
+            let variance = close_vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
+                / (lookback as f64 - 1.0);
             let std = variance.sqrt() + 1e-6;
 
-            let normalized_features: Vec<f64> = window_features.iter().flat_map(|f| {
-                vec![
-                    (f[0] - mean) / std,
-                    (f[1] - mean) / std
-                ]
-            }).collect();
+            let normalized_features: Vec<f64> = window_features
+                .iter()
+                .flat_map(|f| vec![(f[0] - mean) / std, (f[1] - mean) / std])
+                .collect();
 
-            let normalized_targets: Vec<f64> = window_targets.iter().map(|t| (t - mean) / std).collect();
+            let normalized_targets: Vec<f64> =
+                window_targets.iter().map(|t| (t - mean) / std).collect();
 
             features.push(normalized_features);
             targets.push(normalized_targets);
             asset_ids.push(asset_id);
         }
 
-        TrainingDataset { features, targets, asset_ids }
+        TrainingDataset {
+            features,
+            targets,
+            asset_ids,
+        }
     }
 }
 
@@ -427,9 +480,9 @@ mod tests {
         let lookback = 10;
         let forecast = 5;
         let asset_id = 0;
-        
+
         let dataset = mock_data.prepare_training_data(lookback, forecast, asset_id);
-        
+
         // Check if we have data
         assert!(!dataset.features.is_empty());
         assert!(!dataset.targets.is_empty());
@@ -437,14 +490,14 @@ mod tests {
         assert_eq!(dataset.features.len(), dataset.targets.len());
         assert_eq!(dataset.features.len(), dataset.asset_ids.len());
         assert_eq!(dataset.asset_ids[0], asset_id);
-        
+
         // Check dimensions
         let first_feature = &dataset.features[0];
         assert_eq!(first_feature.len(), lookback * 2); // 2 features per step
-        
+
         let first_target = &dataset.targets[0];
         assert_eq!(first_target.len(), forecast);
-        
+
         // Check normalization (mean should be close to 0, std close to 1)
         // This is per-window normalization, so we check one window
         let close_vals: Vec<f64> = first_feature.iter().step_by(2).cloned().collect();
@@ -452,9 +505,9 @@ mod tests {
         // Since we normalized, the mean of the *original* window was subtracted.
         // The values in `first_feature` are already normalized.
         // So their mean should be ~0 and std ~1.
-        
+
         let _feat_mean = first_feature.iter().sum::<f64>() / first_feature.len() as f64;
-        // Note: we normalize close and overnight returns together? 
+        // Note: we normalize close and overnight returns together?
         // In prepare_training_data:
         // let normalized_features: Vec<f64> = window_features.iter().flat_map(|f| {
         //     vec![
@@ -464,10 +517,10 @@ mod tests {
         // }).collect();
         // We use the same mean/std (calculated from close returns) for both features.
         // So the mean of the normalized close returns should be 0.
-        
+
         let norm_close_vals: Vec<f64> = first_feature.iter().step_by(2).cloned().collect();
         let norm_mean = norm_close_vals.iter().sum::<f64>() / norm_close_vals.len() as f64;
-        
+
         assert!(norm_mean.abs() < 1e-5);
     }
 }

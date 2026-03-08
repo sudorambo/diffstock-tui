@@ -1,13 +1,13 @@
+use crate::config::{DIFF_STEPS, HIDDEN_DIM, INPUT_DIM, NUM_LAYERS, TRAINING_SYMBOLS, get_device};
 use crate::data::StockData;
 use crate::diffusion::GaussianDiffusion;
 use crate::models::time_grad::{EpsilonTheta, RNNEncoder};
-use crate::config::{get_device, DIFF_STEPS, HIDDEN_DIM, INPUT_DIM, NUM_LAYERS, TRAINING_SYMBOLS};
 use anyhow::Result;
 use candle_core::{DType, Tensor};
 use candle_nn::VarBuilder;
+use chrono::Duration;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-use chrono::Duration;
 use tracing::warn;
 
 #[derive(Clone, Debug)]
@@ -29,47 +29,54 @@ pub async fn run_inference(
 ) -> Result<ForecastData> {
     // 1. Setup Device and Data
     let device = get_device(use_cuda);
-    
+
     // Prepare Context Data (Last 50 days)
     let context_len = 50;
     if data.history.len() < context_len + 1 {
-        return Err(anyhow::anyhow!("Not enough history data (need at least 51 days)"));
+        return Err(anyhow::anyhow!(
+            "Not enough history data (need at least 51 days)"
+        ));
     }
 
     let start_idx = data.history.len() - context_len;
-    
+
     // Calculate features for the context window
     let mut features = Vec::with_capacity(context_len);
     let mut close_vals = Vec::with_capacity(context_len);
 
     for i in 0..context_len {
         let idx = start_idx + i;
-        let close_ret = (data.history[idx].close / data.history[idx-1].close).ln();
-        let overnight_ret = (data.history[idx].open / data.history[idx-1].close).ln();
+        let close_ret = (data.history[idx].close / data.history[idx - 1].close).ln();
+        let overnight_ret = (data.history[idx].open / data.history[idx - 1].close).ln();
         features.push(vec![close_ret, overnight_ret]);
         close_vals.push(close_ret);
     }
 
     // Normalize Context
     let mean = close_vals.iter().sum::<f64>() / context_len as f64;
-    let variance = close_vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (context_len as f64 - 1.0);
+    let variance =
+        close_vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (context_len as f64 - 1.0);
     let std = variance.sqrt() + 1e-6;
 
-    let normalized_features: Vec<f32> = features.iter().flat_map(|f| {
-        vec![
-            ((f[0] - mean) / std) as f32,
-            ((f[1] - mean) / std) as f32
-        ]
-    }).collect();
+    let normalized_features: Vec<f32> = features
+        .iter()
+        .flat_map(|f| vec![((f[0] - mean) / std) as f32, ((f[1] - mean) / std) as f32])
+        .collect();
 
     // [1, SeqLen, 2]
     let context_tensor = Tensor::from_slice(&normalized_features, (1, context_len, 2), &device)?;
 
     // Determine Asset ID
-    let asset_id = TRAINING_SYMBOLS.iter().position(|&s| s == data.symbol).unwrap_or_else(|| {
-        warn!("Symbol {} not found in training set. Using default asset ID 0.", data.symbol);
-        0
-    });
+    let asset_id = TRAINING_SYMBOLS
+        .iter()
+        .position(|&s| s == data.symbol)
+        .unwrap_or_else(|| {
+            warn!(
+                "Symbol {} not found in training set. Using default asset ID 0.",
+                data.symbol
+            );
+            0
+        });
     let asset_id_tensor = Tensor::new(&[asset_id as u32], &device)?;
 
     // 2. Initialize Model
@@ -77,14 +84,29 @@ pub async fn run_inference(
 
     // Load weights if available
     let vb = if std::path::Path::new("model_weights.safetensors").exists() {
-        unsafe { VarBuilder::from_mmaped_safetensors(&["model_weights.safetensors"], DType::F32, &device)? }
+        unsafe {
+            VarBuilder::from_mmaped_safetensors(
+                &["model_weights.safetensors"],
+                DType::F32,
+                &device,
+            )?
+        }
     } else {
-        warn!("model_weights.safetensors not found — model is untrained. Predictions will be meaningless. Run with --train first.");
+        warn!(
+            "model_weights.safetensors not found — model is untrained. Predictions will be meaningless. Run with --train first."
+        );
         VarBuilder::zeros(DType::F32, &device)
     };
 
     let encoder = RNNEncoder::new(INPUT_DIM, HIDDEN_DIM, vb.pp("encoder"))?;
-    let model = EpsilonTheta::new(1, HIDDEN_DIM, HIDDEN_DIM, NUM_LAYERS, num_assets, vb.pp("model"))?;
+    let model = EpsilonTheta::new(
+        1,
+        HIDDEN_DIM,
+        HIDDEN_DIM,
+        NUM_LAYERS,
+        num_assets,
+        vb.pp("model"),
+    )?;
     let diffusion = GaussianDiffusion::new(DIFF_STEPS, &device)?;
 
     // 3. Encode History
@@ -113,14 +135,15 @@ pub async fn run_inference(
             // Wait, diffusion.sample() calls model.forward().
             // I need to update diffusion.sample() to accept asset_ids!
             let sample = diffusion.sample(&model, &current_hidden, &asset_id_tensor, (1, 1, 1))?;
-            
-            let predicted_norm_ret = sample.squeeze(2)?.squeeze(1)?.get(0)?.to_scalar::<f32>()? as f64;
-            
+
+            let predicted_norm_ret =
+                sample.squeeze(2)?.squeeze(1)?.get(0)?.to_scalar::<f32>()? as f64;
+
             // Denormalize
             let predicted_ret = (predicted_norm_ret * std) + mean;
-            
+
             let next_price = path_last_val * predicted_ret.exp();
-            
+
             current_path.push(next_price);
             path_last_val = next_price;
 
@@ -144,13 +167,11 @@ pub async fn run_inference(
     for t in 0..horizon {
         let mut time_slice: Vec<f64> = all_paths.iter().map(|p| p[t]).collect();
         // Sort with NaN last so partial_cmp is never called on NaN (avoids panic)
-        time_slice.sort_by(|a, b| {
-            match (a.is_nan(), b.is_nan()) {
-                (true, true) => std::cmp::Ordering::Equal,
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, true) => std::cmp::Ordering::Less,
-                (false, false) => a.partial_cmp(b).unwrap(),
-            }
+        time_slice.sort_by(|a, b| match (a.is_nan(), b.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => a.partial_cmp(b).unwrap(),
         });
 
         let idx_10 = (num_simulations as f64 * 0.1) as usize;
@@ -181,7 +202,7 @@ pub async fn run_backtest(data: Arc<StockData>, use_cuda: bool) -> Result<()> {
     println!("Running Backtest...");
     let horizon = 10;
     let num_simulations = 500;
-    
+
     // Hide last 50 days (or just horizon?)
     // The prompt says "hides the last 50 days".
     let hidden_days = 50;
@@ -192,7 +213,7 @@ pub async fn run_backtest(data: Arc<StockData>, use_cuda: bool) -> Result<()> {
     // Create a subset of data
     let train_len = data.history.len() - hidden_days;
     let train_history = data.history[..train_len].to_vec();
-    let test_history = data.history[train_len..train_len+horizon].to_vec(); // Test on next 'horizon' days
+    let test_history = data.history[train_len..train_len + horizon].to_vec(); // Test on next 'horizon' days
 
     let train_data = Arc::new(StockData {
         symbol: data.symbol.clone(),
@@ -207,15 +228,28 @@ pub async fn run_backtest(data: Arc<StockData>, use_cuda: bool) -> Result<()> {
         let price = candle.close;
         let lower = forecast.p10[i].1;
         let upper = forecast.p90[i].1;
-        
+
         if price >= lower && price <= upper {
             inside_cone += 1;
         }
-        println!("Day {}: Price={:.2}, P10={:.2}, P90={:.2} [{}]", 
-            i+1, price, lower, upper, if price >= lower && price <= upper { "INSIDE" } else { "OUTSIDE" });
+        println!(
+            "Day {}: Price={:.2}, P10={:.2}, P90={:.2} [{}]",
+            i + 1,
+            price,
+            lower,
+            upper,
+            if price >= lower && price <= upper {
+                "INSIDE"
+            } else {
+                "OUTSIDE"
+            }
+        );
     }
 
-    println!("Coverage Probability (P10-P90): {:.2}%", (inside_cone as f64 / horizon as f64) * 100.0);
+    println!(
+        "Coverage Probability (P10-P90): {:.2}%",
+        (inside_cone as f64 / horizon as f64) * 100.0
+    );
     Ok(())
 }
 
@@ -301,7 +335,10 @@ mod tests {
 
         // Should run without panicking (zeros fallback)
         let result = run_inference(data, 3, 10, None, false).await;
-        assert!(result.is_ok(), "inference with zeros fallback should not panic");
+        assert!(
+            result.is_ok(),
+            "inference with zeros fallback should not panic"
+        );
 
         let forecast = result.unwrap();
         assert_eq!(forecast.p50.len(), 3);

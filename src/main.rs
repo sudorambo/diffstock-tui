@@ -2,22 +2,22 @@ mod app;
 mod config;
 mod data;
 mod diffusion;
+mod gui;
 mod inference;
 mod models;
 mod train;
 mod tui;
 mod ui;
-mod gui;
 
 use app::App;
 use clap::Parser;
 use std::io;
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[derive(Parser, Debug)]
 #[command(
-    author, 
-    version, 
+    author,
+    version,
     about = "DiffStock-TUI: Probabilistic stock price forecasting with Diffusion Models",
     after_help = "EXAMPLES:
     # Train with default settings
@@ -72,7 +72,15 @@ async fn main() -> io::Result<()> {
     let args = Args::parse();
 
     if args.train {
-        match train::train_model(args.epochs, args.batch_size, args.learning_rate, args.patience, args.cuda).await {
+        match train::train_model(
+            args.epochs,
+            args.batch_size,
+            args.learning_rate,
+            args.patience,
+            args.cuda,
+        )
+        .await
+        {
             Ok(_) => info!("Training completed successfully."),
             Err(e) => error!("Training failed: {}", e),
         }
@@ -100,14 +108,15 @@ async fn main() -> io::Result<()> {
             "DiffStock",
             options,
             Box::new(|_cc| Ok(Box::new(gui::GuiApp::new(App::new(args.cuda))))),
-        ).map_err(|e| io::Error::other(e.to_string()))?;
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
         return Ok(());
     }
 
     let mut terminal = tui::init()?;
     let mut app = App::new(args.cuda);
     let res = app.run(&mut terminal).await;
-    
+
     tui::restore()?;
 
     if let Err(e) = res {

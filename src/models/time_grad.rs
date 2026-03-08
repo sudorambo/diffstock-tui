@@ -1,5 +1,5 @@
 use candle_core::{Module, Result, Tensor};
-use candle_nn::{Conv1d, Conv1dConfig, Linear, VarBuilder, LSTMConfig, LSTM, RNN, Embedding};
+use candle_nn::{Conv1d, Conv1dConfig, Embedding, LSTM, LSTMConfig, Linear, RNN, VarBuilder};
 
 // --- 1. Diffusion Embedding ---
 // Encodes the diffusion step 'k' into a vector.
@@ -13,14 +13,17 @@ impl DiffusionEmbedding {
         // Input is scalar time step (1), project to dim
         let projection1 = candle_nn::linear(1, dim, vb.pp("projection1"))?;
         let projection2 = candle_nn::linear(dim, dim, vb.pp("projection2"))?;
-        Ok(Self { projection1, projection2 })
+        Ok(Self {
+            projection1,
+            projection2,
+        })
     }
 
     pub fn forward(&self, diffusion_steps: &Tensor) -> Result<Tensor> {
-        // Sinusoidal embedding logic would go here. 
+        // Sinusoidal embedding logic would go here.
         // For simplicity in this prototype, we project the raw step.
         // In a real implementation: [sin(pos * w), cos(pos * w), ...]
-        
+
         // Assuming diffusion_steps is [batch_size, 1]
         let x = self.projection1.forward(diffusion_steps)?;
         let x = candle_nn::ops::silu(&x)?;
@@ -55,7 +58,7 @@ impl ResidualBlock {
         let dilated_conv = candle_nn::conv1d(
             residual_channels,
             2 * dilation_channels, // Double for gate + filter
-            3, // Kernel size
+            3,                     // Kernel size
             conv_cfg,
             vb.pp("dilated_conv"),
         )?;
@@ -90,14 +93,19 @@ impl ResidualBlock {
         })
     }
 
-    pub fn forward(&self, x: &Tensor, diffusion_emb: &Tensor, cond: &Tensor) -> Result<(Tensor, Tensor)> {
+    pub fn forward(
+        &self,
+        x: &Tensor,
+        diffusion_emb: &Tensor,
+        cond: &Tensor,
+    ) -> Result<(Tensor, Tensor)> {
         // x: [batch, channels, time]
-        // diffusion_emb: [batch, channels] 
+        // diffusion_emb: [batch, channels]
         // cond: [batch, 1, time]
 
         // 1. Dilated Conv
         let h = self.dilated_conv.forward(x)?;
-        
+
         // 2. Add Conditioner
         let h_cond = self.conditioner_projection.forward(cond)?;
         let h = h.broadcast_add(&h_cond)?;
@@ -106,7 +114,7 @@ impl ResidualBlock {
         let diffusion_emb = self.diffusion_projection.forward(diffusion_emb)?;
         let diffusion_emb = diffusion_emb.unsqueeze(2)?; // [batch, 2*dilation_channels, 1]
         let h = h.broadcast_add(&diffusion_emb)?;
-        
+
         // 4. Gated Activation
         // Split into filter and gate
         let chunks = h.chunk(2, 1)?;
@@ -154,8 +162,10 @@ impl EpsilonTheta {
             vb.pp("input_projection"),
         )?;
 
-        let diffusion_embedding = DiffusionEmbedding::new(residual_channels, vb.pp("diffusion_embedding"))?;
-        let asset_embedding = candle_nn::embedding(num_assets, residual_channels, vb.pp("asset_embedding"))?;
+        let diffusion_embedding =
+            DiffusionEmbedding::new(residual_channels, vb.pp("diffusion_embedding"))?;
+        let asset_embedding =
+            candle_nn::embedding(num_assets, residual_channels, vb.pp("asset_embedding"))?;
 
         let mut residual_layers = Vec::new();
         for i in 0..num_layers {
@@ -194,14 +204,20 @@ impl EpsilonTheta {
         })
     }
 
-    pub fn forward(&self, x: &Tensor, time_steps: &Tensor, asset_ids: &Tensor, cond: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        x: &Tensor,
+        time_steps: &Tensor,
+        asset_ids: &Tensor,
+        cond: &Tensor,
+    ) -> Result<Tensor> {
         let mut x = self.input_projection.forward(x)?;
         let diffusion_emb = self.diffusion_embedding.forward(time_steps)?;
         let asset_emb = self.asset_embedding.forward(asset_ids)?;
-        
+
         // Combine embeddings (Add)
         let combined_emb = (diffusion_emb + asset_emb)?;
-        
+
         let mut skip_connections = Vec::new();
 
         for layer in &self.residual_layers {
@@ -247,7 +263,9 @@ impl RNNEncoder {
         // We only care about the final hidden state for the next step prediction
         let states = self.lstm.seq(x)?;
         // Take the last state
-        let last_state = states.last().ok_or_else(|| candle_core::Error::Msg("Empty LSTM sequence".into()))?;
+        let last_state = states
+            .last()
+            .ok_or_else(|| candle_core::Error::Msg("Empty LSTM sequence".into()))?;
         let h_t = &last_state.h;
         let cond = self.projection.forward(h_t)?;
         Ok(cond)

@@ -17,7 +17,9 @@ pub fn get_device(use_cuda: bool) -> Device {
         }
         #[cfg(not(feature = "cuda"))]
         {
-            warn!("--cuda flag set but binary was compiled without the 'cuda' feature. Falling back to CPU.");
+            warn!(
+                "--cuda flag set but binary was compiled without the 'cuda' feature. Falling back to CPU."
+            );
         }
     }
     info!("Using CPU device");

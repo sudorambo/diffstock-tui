@@ -77,7 +77,14 @@ impl App {
 
                             // Spawn Inference Task
                             tokio::spawn(async move {
-                                let res = inference::run_inference(data_clone, 50, 500, Some(prog_tx), use_cuda).await;
+                                let res = inference::run_inference(
+                                    data_clone,
+                                    50,
+                                    500,
+                                    Some(prog_tx),
+                                    use_cuda,
+                                )
+                                .await;
                                 let _ = res_tx.send(res).await;
                             });
                         }
@@ -151,7 +158,9 @@ impl App {
                         match self.state {
                             AppState::Input => match key.code {
                                 KeyCode::Char(c) => self.input.push(c),
-                                KeyCode::Backspace => { self.input.pop(); },
+                                KeyCode::Backspace => {
+                                    self.input.pop();
+                                }
                                 KeyCode::Enter => {
                                     self.trigger_fetch();
                                 }
@@ -173,12 +182,12 @@ impl App {
                                     self.forecast = None;
                                 }
                                 _ => {}
-                            }
+                            },
                         }
                     }
                 }
             }
-            }
+        }
         Ok(())
     }
 }
