@@ -77,7 +77,7 @@ impl eframe::App for GuiApp {
                             let dt = chrono::Utc
                                 .timestamp_opt(x.value as i64, 0)
                                 .single()
-                                .unwrap_or_else(|| chrono::Utc::now());
+                                .unwrap_or_else(chrono::Utc::now);
                             dt.format("%Y-%m-%d").to_string()
                         })
                         .label_formatter(|name, value| {
@@ -160,59 +160,61 @@ impl eframe::App for GuiApp {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.heading("Market Data");
-                            if let Some(data) = &self.app.stock_data {
-                                if let Some(last) = data.history.last() {
-                                    ui.label(format!("Last Price: {:.2}", last.close));
-                                    ui.label(format!("Date: {}", last.date.format("%Y-%m-%d")));
-                                    ui.label(format!("Volume: {:.0}", last.volume));
-                                }
+                            if let Some(data) = &self.app.stock_data
+                                && let Some(last) = data.history.last()
+                            {
+                                ui.label(format!("Last Price: {:.2}", last.close));
+                                ui.label(format!("Date: {}", last.date.format("%Y-%m-%d")));
+                                ui.label(format!("Volume: {:.0}", last.volume));
                             }
                         });
                         ui.separator();
                         ui.vertical(|ui| {
                             ui.heading("Forecast");
-                            if let Some(forecast) = &self.app.forecast {
-                                if let Some((timestamp, p50_last)) = forecast.p50.last() {
-                                    let dt = chrono::Utc
-                                        .timestamp_opt(*timestamp as i64, 0)
-                                        .map(|dt| dt.format("%Y-%m-%d").to_string())
-                                        .single()
-                                        .unwrap_or_default();
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "Target (Median) (50day - {}): {:.2}",
-                                            dt, p50_last
-                                        ))
-                                        .strong()
-                                        .color(egui::Color32::GREEN),
-                                    );
-                                }
-                                if let Some((_, p30_last)) = forecast.p30.last() {
-                                    if let Some((_, p70_last)) = forecast.p70.last() {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "Range (P30-P70): {:.2} - {:.2}",
-                                                p30_last, p70_last
-                                            ))
-                                            .strong()
-                                            .color(egui::Color32::YELLOW),
-                                        );
-                                    }
-                                }
-                                if let Some((_, p10_last)) = forecast.p10.last() {
-                                    if let Some((_, p90_last)) = forecast.p90.last() {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "Range (P10-P90): {:.2} - {:.2}",
-                                                p10_last, p90_last
-                                            ))
-                                            .strong()
-                                            .color(egui::Color32::LIGHT_RED),
-                                        );
-                                        ui.label("P10: Bearish / Conservative");
-                                        ui.label("P90: Bullish / Optimistic");
-                                    }
-                                }
+                            if let Some(forecast) = &self.app.forecast
+                                && let Some((timestamp, p50_last)) = forecast.p50.last()
+                            {
+                                let dt = chrono::Utc
+                                    .timestamp_opt(*timestamp as i64, 0)
+                                    .map(|dt| dt.format("%Y-%m-%d").to_string())
+                                    .single()
+                                    .unwrap_or_default();
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Target (Median) (50day - {}): {:.2}",
+                                        dt, p50_last
+                                    ))
+                                    .strong()
+                                    .color(egui::Color32::GREEN),
+                                );
+                            }
+                            if let Some(forecast) = &self.app.forecast
+                                && let Some((_, p30_last)) = forecast.p30.last()
+                                && let Some((_, p70_last)) = forecast.p70.last()
+                            {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Range (P30-P70): {:.2} - {:.2}",
+                                        p30_last, p70_last
+                                    ))
+                                    .strong()
+                                    .color(egui::Color32::YELLOW),
+                                );
+                            }
+                            if let Some(forecast) = &self.app.forecast
+                                && let Some((_, p10_last)) = forecast.p10.last()
+                                && let Some((_, p90_last)) = forecast.p90.last()
+                            {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Range (P10-P90): {:.2} - {:.2}",
+                                        p10_last, p90_last
+                                    ))
+                                    .strong()
+                                    .color(egui::Color32::LIGHT_RED),
+                                );
+                                ui.label("P10: Bearish / Conservative");
+                                ui.label("P90: Bullish / Optimistic");
                             }
                         });
                     });

@@ -148,10 +148,10 @@ pub async fn run_inference(
             path_last_val = next_price;
 
             completed_steps += 1;
-            if completed_steps % 10 == 0 {
-                if let Some(tx) = &progress_tx {
-                    let _ = tx.send(completed_steps as f64 / total_steps as f64).await;
-                }
+            if completed_steps % 10 == 0
+                && let Some(tx) = &progress_tx
+            {
+                let _ = tx.send(completed_steps as f64 / total_steps as f64).await;
             }
         }
         all_paths.push(current_path);
