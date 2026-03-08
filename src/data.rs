@@ -53,12 +53,33 @@ struct YahooQuote {
     volume: Vec<Option<f64>>,
 }
 
+/// Maximum allowed length for a symbol (prevents cache path abuse).
+const MAX_SYMBOL_LEN: usize = 12;
+
+/// Validates symbol for cache key safety (alphanumeric, reasonable length).
+/// Returns `None` if valid, or `Some(error_message)` if invalid.
+pub fn validate_symbol(symbol: &str) -> Option<&'static str> {
+    if symbol.is_empty() {
+        return Some("Symbol cannot be empty.");
+    }
+    if symbol.len() > MAX_SYMBOL_LEN {
+        return Some("Symbol too long.");
+    }
+    if !symbol.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Some("Symbol must contain only letters and numbers.");
+    }
+    None
+}
+
 /// Fetches historical stock data from Yahoo Finance.
 ///
 /// # Arguments
 /// * `symbol` - The stock ticker symbol (e.g., "AAPL").
 /// * `range` - The time range to fetch (e.g., "1y", "5y").
 pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
+    if let Some(msg) = validate_symbol(symbol) {
+        return Err(anyhow::anyhow!("{}", msg));
+    }
     let cache_dir = std::path::Path::new(".cache");
     if !cache_dir.exists() {
         std::fs::create_dir(cache_dir)?;
@@ -99,8 +120,11 @@ pub async fn fetch_range(symbol: &str, range: &str) -> Result<StockData> {
             quotes.close[i],
             quotes.volume[i],
         ) {
+            let date = Utc.timestamp_opt(timestamp, 0)
+                .single()
+                .ok_or_else(|| anyhow::anyhow!("invalid timestamp {}", timestamp))?;
             history.push(Candle {
-                date: Utc.timestamp_opt(timestamp, 0).unwrap(),
+                date,
                 open,
                 high,
                 low,
@@ -195,8 +219,11 @@ impl StockData {
                 quote.close.get(i).and_then(|v| *v),
                 quote.volume.get(i).and_then(|v| *v),
             ) {
+                let date = Utc.timestamp_opt(timestamp, 0)
+                    .single()
+                    .ok_or_else(|| anyhow::anyhow!("invalid timestamp {}", timestamp))?;
                 history.push(Candle {
-                    date: Utc.timestamp_opt(timestamp, 0).unwrap(),
+                    date,
                     open,
                     high,
                     low,

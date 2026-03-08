@@ -2,6 +2,18 @@
 
 All notable changes to DiffStock-TUI are documented here.
 
+## [1.0.0] - 2025-03-08
+
+### Added
+- **First stable release.**
+- **Symbol validation**: Ticker symbols are validated (alphanumeric, max 12 chars) before fetch to prevent cache path abuse.
+
+### Fixed
+- **Empty/short history panic**: App now requires at least 51 days of data before starting inference; otherwise shows a clear error and stays on input.
+- **Timestamp conversion panics**: Yahoo response timestamps use `timestamp_opt(...).single().ok_or(...)` so invalid timestamps return an error instead of panicking; GUI x-axis formatter uses a fallback for invalid timestamps.
+- **Inference sort NaN**: Percentile sort uses a NaN-safe comparator so NaN in path values no longer panics.
+- **Inference last()**: Replaced `history.last().unwrap()` with explicit `ok_or_else` for clarity and defense in depth.
+
 ## [0.1.1] - 2026-02-13
 
 ### Added

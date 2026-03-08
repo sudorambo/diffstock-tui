@@ -1,4 +1,5 @@
-use crate::data::StockData;
+use crate::config::LOOKBACK;
+use crate::data::{StockData, validate_symbol};
 use crate::inference::{self, ForecastData};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use std::io;
@@ -49,27 +50,37 @@ impl App {
             if let Ok(res) = rx.try_recv() {
                 match res {
                     Ok(data) => {
-                        let data = Arc::new(data);
-                        self.stock_data = Some(data.clone());
-                        self.state = AppState::Forecasting;
-                        self.error_msg = None;
-                        self.progress = 0.0;
-                        
-                        // Setup channels for inference
-                        let (prog_tx, prog_rx) = mpsc::channel(100);
-                        let (res_tx, res_rx) = mpsc::channel(1);
-                        
-                        self.progress_rx = Some(prog_rx);
-                        self.result_rx = Some(res_rx);
+                        let min_len = LOOKBACK + 1;
+                        if data.history.len() < min_len {
+                            self.error_msg = Some(format!(
+                                "Not enough data (need at least {} days, got {})",
+                                min_len,
+                                data.history.len()
+                            ));
+                            self.state = AppState::Input;
+                        } else {
+                            let data = Arc::new(data);
+                            self.stock_data = Some(data.clone());
+                            self.state = AppState::Forecasting;
+                            self.error_msg = None;
+                            self.progress = 0.0;
 
-                        let data_clone = data.clone();
-                        let use_cuda = self.use_cuda;
+                            // Setup channels for inference
+                            let (prog_tx, prog_rx) = mpsc::channel(100);
+                            let (res_tx, res_rx) = mpsc::channel(1);
 
-                        // Spawn Inference Task
-                        tokio::spawn(async move {
-                            let res = inference::run_inference(data_clone, 50, 500, Some(prog_tx), use_cuda).await;
-                            let _ = res_tx.send(res).await;
-                        });
+                            self.progress_rx = Some(prog_rx);
+                            self.result_rx = Some(res_rx);
+
+                            let data_clone = data.clone();
+                            let use_cuda = self.use_cuda;
+
+                            // Spawn Inference Task
+                            tokio::spawn(async move {
+                                let res = inference::run_inference(data_clone, 50, 500, Some(prog_tx), use_cuda).await;
+                                let _ = res_tx.send(res).await;
+                            });
+                        }
                     }
                     Err(e) => {
                         self.error_msg = Some(e.to_string());
@@ -108,17 +119,24 @@ impl App {
     }
 
     pub fn trigger_fetch(&mut self) {
-        if !self.input.is_empty() {
-            self.state = AppState::Loading;
-            let symbol = self.input.clone();
-            let (tx, rx) = mpsc::channel(1);
-            self.data_rx = Some(rx);
-            
-            tokio::spawn(async move {
-                let res = StockData::fetch(&symbol).await;
-                let _ = tx.send(res).await;
-            });
+        let symbol = self.input.trim();
+        if symbol.is_empty() {
+            return;
         }
+        if let Some(msg) = validate_symbol(symbol) {
+            self.error_msg = Some(msg.to_string());
+            return;
+        }
+        self.error_msg = None;
+        self.state = AppState::Loading;
+        let symbol = symbol.to_string();
+        let (tx, rx) = mpsc::channel(1);
+        self.data_rx = Some(rx);
+
+        tokio::spawn(async move {
+            let res = StockData::fetch(&symbol).await;
+            let _ = tx.send(res).await;
+        });
     }
 
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> io::Result<()> {

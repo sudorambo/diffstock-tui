@@ -74,7 +74,10 @@ impl eframe::App for GuiApp {
                     let plot = Plot::new("stock_plot")
                         .legend(egui_plot::Legend::default().position(egui_plot::Corner::LeftTop))
                         .x_axis_formatter(|x, _range| {
-                            let dt = chrono::Utc.timestamp_opt(x.value as i64, 0).unwrap();
+                            let dt = chrono::Utc
+                                .timestamp_opt(x.value as i64, 0)
+                                .single()
+                                .unwrap_or_else(|| chrono::Utc::now());
                             dt.format("%Y-%m-%d").to_string()
                         })
                         .label_formatter(|name, value| {

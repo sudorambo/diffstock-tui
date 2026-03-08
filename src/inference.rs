@@ -92,15 +92,20 @@ pub async fn run_inference(
     let hidden_state = hidden_state.unsqueeze(2)?; // [1, 1, 1]
 
     // 4. Autoregressive Forecasting Loop
+    let last_candle = data
+        .history
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("history empty after length check"))?;
+    let start_date = last_candle.date;
+    let last_val = last_candle.close;
     let mut all_paths = Vec::with_capacity(num_simulations);
-    let start_date = data.history.last().unwrap().date;
     let total_steps = num_simulations * horizon;
     let mut completed_steps = 0;
 
     for _ in 0..num_simulations {
         let mut current_path = Vec::with_capacity(horizon);
         let current_hidden = hidden_state.clone();
-        let mut last_val = data.history.last().unwrap().close;
+        let mut path_last_val = last_val;
 
         for _ in 0..horizon {
             // Sample next step (Close Return)
@@ -114,10 +119,10 @@ pub async fn run_inference(
             // Denormalize
             let predicted_ret = (predicted_norm_ret * std) + mean;
             
-            let next_price = last_val * predicted_ret.exp();
+            let next_price = path_last_val * predicted_ret.exp();
             
             current_path.push(next_price);
-            last_val = next_price;
+            path_last_val = next_price;
 
             completed_steps += 1;
             if completed_steps % 10 == 0 {
@@ -138,7 +143,15 @@ pub async fn run_inference(
 
     for t in 0..horizon {
         let mut time_slice: Vec<f64> = all_paths.iter().map(|p| p[t]).collect();
-        time_slice.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // Sort with NaN last so partial_cmp is never called on NaN (avoids panic)
+        time_slice.sort_by(|a, b| {
+            match (a.is_nan(), b.is_nan()) {
+                (true, true) => std::cmp::Ordering::Equal,
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                (false, false) => a.partial_cmp(b).unwrap(),
+            }
+        });
 
         let idx_10 = (num_simulations as f64 * 0.1) as usize;
         let idx_30 = (num_simulations as f64 * 0.3) as usize;
